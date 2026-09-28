@@ -11,7 +11,6 @@ from src.controller.machine import Machine
 from src.controller.point_sequence import PointSequence
 
 CONFIG_FILE = Path("calibration.json")
-
 LIGHT = {"bg": "#ffffff", "panel": "#ffffff", "field": "#f7f7f8", "fg": "#2d2d2d", "muted": "#6e6e80", "border": "#e5e5e5", "accent": "#10a37f", "danger": "#ef4444"}
 DARK = {"bg": "#212121", "panel": "#2f2f2f", "field": "#424242", "fg": "#ececec", "muted": "#b4b4b4", "border": "#4b4b4b", "accent": "#10a37f", "danger": "#f28b82"}
 
@@ -216,9 +215,11 @@ class MainWindow:
             self._terminal_write("< ERROR Arduino não conectado")
             return
         try:
-            # O terminal é assíncrono: envia a linha e deixa _poll_serial()
-            # mostrar todas as respostas que o Arduino produzir.
-            self.arduino.send_nowait(command)
+            # Para o terminal, usamos a fila interna de RX do ArduinoController.
+            # O thread serial já lê a COM3; send() apenas espera a próxima resposta.
+            # Assim a GUI nunca compete diretamente com a porta serial.
+            response = self.arduino.send(command)
+            self._terminal_write(f"< {response}")
         except Exception as exc:
             self._terminal_write(f"< ERROR {exc}")
 
@@ -262,18 +263,14 @@ class MainWindow:
             except Exception:
                 pass
             self.jog_after_id = None
-        if self.arduino is not None and self.arduino.is_connected:
+        if self.arduino is not None:
             try:
                 self.arduino.stop()
             except Exception:
                 pass
 
-    def stop(self, update_log: bool = True) -> None:
-        if self.arduino is not None and self.arduino.is_connected:
-            try:
-                self.arduino.stop()
-            except Exception as exc:
-                self._terminal_write(f"< ERROR STOP {exc}")
+    def stop(self, update_log=True) -> None:
+        self._cancel_jog()
         if update_log:
             self.log_var.set("STOP enviado.")
             self._terminal_write("> STOP")
@@ -282,15 +279,15 @@ class MainWindow:
         messagebox.showinfo("Próxima etapa", "MOVE pela interface será habilitado depois da validação do JOG.")
 
     def zero(self) -> None:
-        if self.arduino is None or not self.arduino.is_connected:
+        if self.arduino is None:
             messagebox.showwarning("ZERO", "Conecte o Arduino antes de zerar.")
             return
         try:
-            self.arduino.send_nowait("ZERO")
+            response = self.arduino.send("ZERO")
             self.machine.zero()
             self.refresh_positions()
-            self._terminal_write("> ZERO")
-            self.log_var.set("ZERO enviado; aguardando confirmação do Arduino.")
+            self._terminal_write(f"> ZERO\n< {response}")
+            self.log_var.set("ZERO confirmado pelo Arduino.")
         except Exception as exc:
             messagebox.showerror("ZERO", str(exc))
 
@@ -314,8 +311,7 @@ class MainWindow:
     def refresh_point_list(self) -> None:
         self.point_list.delete(0, tk.END)
         for index, point in enumerate(self.sequence.points, start=1):
-            label = f" — {point.label}" if point.label else ""
-            self.point_list.insert(tk.END, f"{index:02d} | X = {point.x_mm:.3f} mm{label}")
+            self.point_list.insert(0, f"{index:02d} | X = {point.x_mm:.3f} mm" + (f" — {point.label}" if point.label else ""))
 
     def apply_calibration(self) -> None:
         try:
