@@ -5,11 +5,7 @@ from typing import Optional
 
 
 class ArduinoController:
-    """Camada de comunicação serial entre a GUI e o firmware do Arduino.
-
-    O protocolo continua textual para facilitar testes e auditoria no terminal.
-    Movimentos programados e JOG usam o protocolo já existente no firmware.
-    """
+    """Camada de comunicação serial entre a GUI e o firmware do Arduino."""
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.25):
         self.port = port
@@ -33,8 +29,6 @@ class ArduinoController:
             return
 
         self._serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-        # O Uno normalmente reinicia ao abrir a porta. Esperamos o boot e
-        # descartamos mensagens antigas antes do primeiro comando.
         time.sleep(2.0)
         self._serial.reset_input_buffer()
 
@@ -57,17 +51,13 @@ class ArduinoController:
         if not line:
             raise ValueError("Comando vazio.")
         self._serial.write((line + "\n").encode("ascii"))
+        self._serial.flush()
         return line
 
     def send(self, command: str) -> str:
-        """Envia um comando e espera uma resposta textual.
-
-        Deve ser usado para comandos que possuem uma resposta única, como PING,
-        STATUS, LIMITS, ZERO e comandos de diagnóstico.
-        """
+        """Envia um comando e espera uma única resposta."""
         if not self.is_connected:
             raise RuntimeError("Arduino não conectado.")
-
         line = self._write_line(command)
         response = self._serial.readline().decode("ascii", errors="replace").strip()
         if not response:
@@ -75,20 +65,15 @@ class ArduinoController:
         return response
 
     def send_nowait(self, command: str) -> None:
-        """Envia sem bloquear esperando resposta.
-
-        Usado principalmente por JOG e STOP, pois o firmware pode responder
-        assincronamente enquanto a máquina está em movimento.
-        """
+        """Envia o comando sem esperar resposta."""
         if not self.is_connected:
             raise RuntimeError("Arduino não conectado.")
         self._write_line(command)
 
     def read_available(self) -> list[str]:
-        """Lê todas as linhas que já chegaram sem bloquear a GUI."""
+        """Lê todas as linhas já recebidas sem bloquear a GUI."""
         if not self.is_connected:
             return []
-
         lines: list[str] = []
         while self._serial.in_waiting:
             raw = self._serial.readline()
