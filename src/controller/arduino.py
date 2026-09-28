@@ -5,7 +5,7 @@ from typing import Optional
 
 
 class ArduinoController:
-    """Camada fina de comunicação serial com o Arduino.
+    """Camada de comunicação serial entre a GUI e o firmware do Arduino.
 
     O protocolo é textual de propósito: fica fácil observar no monitor serial
     exatamente o que a GUI está pedindo ao firmware.
@@ -26,37 +26,55 @@ class ArduinoController:
             import serial
         except ImportError as exc:
             raise RuntimeError("PySerial não está instalado. Execute: pip install -r requirements.txt") from exc
+
         if self.is_connected:
             return
+
         self._serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+        # Ao abrir a porta, o Uno normalmente reinicia. Damos tempo para o
+        # boot terminar e limpamos respostas antigas do buffer.
         time.sleep(2.0)
+        self._serial.reset_input_buffer()
+
+        response = self.send("PING")
+        if response != "PONG":
+            self.disconnect()
+            raise RuntimeError(f"Arduino respondeu algo inesperado ao PING: {response!r}")
 
     def disconnect(self) -> None:
         if self.is_connected:
-            self.stop()
+            try:
+                self.stop()
+            except Exception:
+                pass
             self._serial.close()
 
     def send(self, command: str) -> str:
         if not self.is_connected:
             raise RuntimeError("Arduino não conectado.")
+
         line = command.strip()
         if not line:
             raise ValueError("Comando vazio.")
+
         self._serial.write((line + "\n").encode("ascii"))
         response = self._serial.readline().decode("ascii", errors="replace").strip()
         if not response:
-            raise TimeoutError("Arduino não respondeu dentro do tempo limite.")
+            raise TimeoutError(f"Arduino não respondeu ao comando: {line}")
         return response
 
     def send_nowait(self, command: str) -> None:
-        """Envia sem esperar resposta; usado para jog/STOP."""
+        """Envia sem esperar resposta; usado para JOG e STOP."""
         if not self.is_connected:
             raise RuntimeError("Arduino não conectado.")
         line = command.strip()
         self._serial.write((line + "\n").encode("ascii"))
 
     def jog(self, axis: str, direction: int) -> None:
-        self.send_nowait(f"JOG {axis.upper()} {1 if direction > 0 else -1}")
+        axis = axis.upper()
+        if axis not in {"X", "Y", "Z"}:
+            raise ValueError("Eixo inválido.")
+        self.send_nowait(f"JOG {axis} {1 if direction > 0 else -1}")
 
     def stop(self) -> None:
         if self.is_connected:
