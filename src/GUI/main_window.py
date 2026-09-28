@@ -12,16 +12,8 @@ from src.controller.point_sequence import PointSequence
 
 CONFIG_FILE = Path("calibration.json")
 
-LIGHT = {
-    "bg": "#ffffff", "panel": "#ffffff", "field": "#f7f7f8",
-    "fg": "#2d2d2d", "muted": "#6e6e80", "border": "#e5e5e5",
-    "accent": "#10a37f", "danger": "#ef4444",
-}
-DARK = {
-    "bg": "#212121", "panel": "#2f2f2f", "field": "#424242",
-    "fg": "#ececec", "muted": "#b4b4b4", "border": "#4b4b4b",
-    "accent": "#10a37f", "danger": "#f28b82",
-}
+LIGHT = {"bg": "#ffffff", "panel": "#ffffff", "field": "#f7f7f8", "fg": "#2d2d2d", "muted": "#6e6e80", "border": "#e5e5e5", "accent": "#10a37f", "danger": "#ef4444"}
+DARK = {"bg": "#212121", "panel": "#2f2f2f", "field": "#424242", "fg": "#ececec", "muted": "#b4b4b4", "border": "#4b4b4b", "accent": "#10a37f", "danger": "#f28b82"}
 
 
 class MainWindow:
@@ -30,21 +22,18 @@ class MainWindow:
         self.root.title("IC Máquina — Controle de 3 Eixos")
         self.root.geometry("980x760")
         self.root.minsize(900, 680)
-
         self.dark_mode = False
         self.arduino: ArduinoController | None = None
         self.sequence = PointSequence()
         self.recovery_mm = 5.0
         self.jog_after_id: str | None = None
         self.JOG_PULSE_MS = 350
-
         self.machine = Machine(
             x=Axis(200, 16, 8, calibrated_steps_per_mm=400.0),
             y=Axis(200, 16, 8, calibrated_steps_per_mm=400.0),
             z=Axis(200, 16, 8, calibrated_steps_per_mm=400.0),
         )
         self._load_calibration()
-
         self.port_var = tk.StringVar(value="COM3")
         self.status_var = tk.StringVar(value="Arduino desconectado")
         self.log_var = tk.StringVar(value="Pronto.")
@@ -55,12 +44,8 @@ class MainWindow:
         self.point_label_var = tk.StringVar()
         self.terminal_command_var = tk.StringVar()
         self.sequence_status_var = tk.StringVar(value="Nenhum ponto programado.")
-        self.calibration_vars = {
-            a: tk.StringVar(value=f"{self.machine.get_axis(a).microsteps_per_mm:.6f}")
-            for a in "XYZ"
-        }
+        self.calibration_vars = {a: tk.StringVar(value=f"{self.machine.get_axis(a).microsteps_per_mm:.6f}") for a in "XYZ"}
         self.position_vars = {a: tk.StringVar(value="0.000 mm") for a in "XYZ"}
-
         self.style = ttk.Style(self.root)
         self.style.theme_use("clam")
         self._build()
@@ -81,7 +66,8 @@ class MainWindow:
         self.connection.pack(fill="x", padx=20, pady=5)
         ttk.Label(self.connection, text="Porta COM:").grid(row=0, column=0, padx=5)
         ttk.Entry(self.connection, textvariable=self.port_var, width=9).grid(row=0, column=1, padx=5)
-        ttk.Button(self.connection, text="Conectar", command=self.connect).grid(row=0, column=2, padx=5)
+        self.connect_button = ttk.Button(self.connection, text="Conectar", command=self.connect)
+        self.connect_button.grid(row=0, column=2, padx=5)
         ttk.Button(self.connection, text="Desconectar", command=self.disconnect).grid(row=0, column=3, padx=5)
         self.status_label = tk.Label(self.connection, textvariable=self.status_var, font=("Segoe UI", 9, "bold"))
         self.status_label.grid(row=0, column=4, padx=15, sticky="w")
@@ -149,13 +135,11 @@ class MainWindow:
         scroll = ttk.Scrollbar(frame, orient="vertical", command=self.terminal_history.yview)
         scroll.pack(side="right", fill="y")
         self.terminal_history.configure(yscrollcommand=scroll.set)
-
         entry = ttk.Frame(parent)
         entry.pack(fill="x", pady=(8, 0))
         command_entry = ttk.Entry(entry, textvariable=self.terminal_command_var)
         command_entry.pack(side="left", fill="x", expand=True)
         command_entry.bind("<Return>", lambda _event: self.send_terminal_command())
-        command_entry.focus_set()
         ttk.Button(entry, text="Enviar", command=self.send_terminal_command).pack(side="left", padx=(8, 0))
         ttk.Button(entry, text="Limpar", command=self.clear_terminal).pack(side="left", padx=5)
 
@@ -188,12 +172,16 @@ class MainWindow:
         ttk.Button(parent, text="Salvar calibração", command=self.save_calibration).pack(anchor="w")
 
     def connect(self) -> None:
+        if self.arduino is not None and self.arduino.is_connected:
+            self._terminal_write("[SYSTEM] já conectado; nenhuma nova porta foi aberta.")
+            return
         try:
             controller = ArduinoController(self.port_var.get().strip())
             controller.connect()
             self.arduino = controller
             self.status_var.set(f"Arduino conectado — {controller.port}")
             self.status_label.configure(fg=LIGHT["accent"] if not self.dark_mode else DARK["accent"])
+            self.connect_button.configure(state="disabled")
             self.log_var.set("Serial conectada; PING/PONG confirmado.")
             self._terminal_write("[SYSTEM] conectado; PING/PONG OK")
         except Exception as exc:
@@ -208,6 +196,7 @@ class MainWindow:
             self.arduino = None
         self.status_var.set("Arduino desconectado")
         self.status_label.configure(fg=DARK["muted"] if self.dark_mode else LIGHT["muted"])
+        self.connect_button.configure(state="normal")
         self.log_var.set("Arduino desconectado.")
 
     def _terminal_write(self, text: str) -> None:
@@ -223,23 +212,18 @@ class MainWindow:
             return
         self.terminal_command_var.set("")
         self._terminal_write(f"> {command}")
-        if self.arduino is None:
+        if self.arduino is None or not self.arduino.is_connected:
             self._terminal_write("< ERROR Arduino não conectado")
             return
         try:
-            upper = command.upper()
-            # JOG e STOP podem produzir respostas de forma assíncrona; não
-            # bloqueamos a GUI esperando uma única linha nesses comandos.
-            if upper.startswith("JOG ") or upper == "STOP":
-                self.arduino.send_nowait(command)
-                self._terminal_write("< comando enviado; aguardando resposta...")
-            else:
-                self._terminal_write(f"< {self.arduino.send(command)}")
+            # O terminal é assíncrono: envia a linha e deixa _poll_serial()
+            # mostrar todas as respostas que o Arduino produzir.
+            self.arduino.send_nowait(command)
         except Exception as exc:
             self._terminal_write(f"< ERROR {exc}")
 
     def _poll_serial(self) -> None:
-        if self.arduino is not None:
+        if self.arduino is not None and self.arduino.is_connected:
             try:
                 for line in self.arduino.read_available():
                     self._terminal_write(f"< {line}")
@@ -256,13 +240,10 @@ class MainWindow:
         except ValueError:
             messagebox.showerror("JOG", "Passos/pulso deve ser um inteiro positivo.")
             return
-        if self.arduino is None:
+        if self.arduino is None or not self.arduino.is_connected:
             self.log_var.set("Arduino desconectado — JOG não executado.")
             return
         try:
-            # O firmware atual define o JOG por tempo/renovação, não por
-            # quantidade de passos. O campo acima permanece visível apenas
-            # como placeholder até o protocolo MOVE ser integrado.
             self.arduino.jog(axis, direction)
             self._terminal_write(f"> JOG {axis} {direction}")
             self.log_var.set(f"JOG {axis} {'+' if direction > 0 else '-'} — pulso iniciado.")
@@ -281,14 +262,18 @@ class MainWindow:
             except Exception:
                 pass
             self.jog_after_id = None
-        if self.arduino is not None:
+        if self.arduino is not None and self.arduino.is_connected:
             try:
                 self.arduino.stop()
             except Exception:
                 pass
 
     def stop(self, update_log: bool = True) -> None:
-        self._cancel_jog()
+        if self.arduino is not None and self.arduino.is_connected:
+            try:
+                self.arduino.stop()
+            except Exception as exc:
+                self._terminal_write(f"< ERROR STOP {exc}")
         if update_log:
             self.log_var.set("STOP enviado.")
             self._terminal_write("> STOP")
@@ -297,15 +282,15 @@ class MainWindow:
         messagebox.showinfo("Próxima etapa", "MOVE pela interface será habilitado depois da validação do JOG.")
 
     def zero(self) -> None:
-        if self.arduino is None:
+        if self.arduino is None or not self.arduino.is_connected:
             messagebox.showwarning("ZERO", "Conecte o Arduino antes de zerar.")
             return
         try:
-            response = self.arduino.send("ZERO")
+            self.arduino.send_nowait("ZERO")
             self.machine.zero()
             self.refresh_positions()
-            self._terminal_write(f"> ZERO\n< {response}")
-            self.log_var.set("ZERO confirmado pelo Arduino.")
+            self._terminal_write("> ZERO")
+            self.log_var.set("ZERO enviado; aguardando confirmação do Arduino.")
         except Exception as exc:
             messagebox.showerror("ZERO", str(exc))
 
@@ -330,7 +315,7 @@ class MainWindow:
         self.point_list.delete(0, tk.END)
         for index, point in enumerate(self.sequence.points, start=1):
             label = f" — {point.label}" if point.label else ""
-            self.point_list.insert(0 + tk.END, f"{index:02d} | X = {point.x_mm:.3f} mm{label}")
+            self.point_list.insert(tk.END, f"{index:02d} | X = {point.x_mm:.3f} mm{label}")
 
     def apply_calibration(self) -> None:
         try:
