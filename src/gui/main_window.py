@@ -12,33 +12,21 @@ from src.controller.point_sequence import PointSequence
 
 CONFIG_FILE = Path("calibration.json")
 
-# Paleta inspirada no Discord: escura, neutra e com um único destaque.
-BG = "#313338"
-PANEL = "#2b2d31"
-PANEL_2 = "#1e1f22"
-INPUT = "#1e1f22"
-TEXT = "#f2f3f5"
-MUTED = "#b5bac1"
-ACCENT = "#5865f2"
-ACCENT_HOVER = "#4752c4"
-SUCCESS = "#23a559"
-DANGER = "#da373c"
-BORDER = "#3f4147"
+# Tema claro original / tema escuro inspirado na interface escura do ChatGPT.
+LIGHT = {"bg": "#f0f0f0", "panel": "#ffffff", "field": "#ffffff", "fg": "#202124", "muted": "#5f6368", "border": "#d0d3d8", "accent": "#5865f2", "danger": "#d93025"}
+DARK = {"bg": "#212121", "panel": "#2f2f2f", "field": "#424242", "fg": "#ececec", "muted": "#b4b4b4", "border": "#4b4b4b", "accent": "#8ab4f8", "danger": "#f28b82"}
 
 
 class MainWindow:
-    """Interface principal da máquina."""
-
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("IC Máquina — Controle de 3 Eixos")
-        self.root.geometry("1000x720")
-        self.root.minsize(920, 650)
-        self.dark_mode = True
+        self.root.geometry("900x680")
+        self.root.minsize(820, 620)
+        self.dark_mode = False
         self.arduino: ArduinoController | None = None
         self.sequence = PointSequence()
         self.recovery_mm = 5.0
-        self.down_direction = -1
         self.up_direction = 1
 
         self.machine = Machine(
@@ -49,158 +37,148 @@ class MainWindow:
         self._load_calibration()
 
         self.port_var = tk.StringVar(value="COM3")
-        self.status_var = tk.StringVar(value="MODO VIRTUAL  •  Arduino desconectado")
-        self.log_var = tk.StringVar(value="Pronto. Nenhum motor será acionado sem conectar o Arduino.")
+        self.status_var = tk.StringVar(value="Modo virtual — Arduino desconectado")
+        self.log_var = tk.StringVar(value="Pronto.")
         self.step_var = tk.StringVar(value="100")
         self.target_axis_var = tk.StringVar(value="X")
-        self.target_var = tk.StringVar(value="")
+        self.target_var = tk.StringVar()
         self.recovery_var = tk.StringVar(value=str(self.recovery_mm))
-        self.point_x_var = tk.StringVar(value="")
-        self.point_label_var = tk.StringVar(value="")
-        self.calibration_vars = {
-            axis: tk.StringVar(value=f"{self.machine.get_axis(axis).microsteps_per_mm:.6f}")
-            for axis in ("X", "Y", "Z")
-        }
-        self.position_vars = {axis: tk.StringVar(value="0.000 mm") for axis in ("X", "Y", "Z")}
+        self.point_x_var = tk.StringVar()
+        self.point_label_var = tk.StringVar()
+        self.calibration_vars = {a: tk.StringVar(value=f"{self.machine.get_axis(a).microsteps_per_mm:.6f}") for a in "XYZ"}
+        self.position_vars = {a: tk.StringVar(value="0.000 mm") for a in "XYZ"}
         self.sequence_status_var = tk.StringVar(value="Nenhum ponto programado.")
 
         self.style = ttk.Style(self.root)
         self.style.theme_use("clam")
-        self._apply_theme()
         self._build()
+        self._apply_theme()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def _build(self) -> None:
-        header = tk.Frame(self.root, bg=BG)
-        header.pack(fill="x", padx=20, pady=(18, 10))
-        tk.Label(header, text="IC Máquina", bg=BG, fg=TEXT, font=("Segoe UI", 20, "bold")).pack(side="left")
-        tk.Label(header, text="CONTROLE • 3 EIXOS", bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")).pack(side="left", padx=12, pady=(8, 0))
-        ttk.Button(header, text="Alternar tema", command=self.toggle_dark_mode).pack(side="right")
+        self.header = tk.Frame(self.root)
+        self.header.pack(fill="x", padx=20, pady=(15, 8))
+        self.title_label = tk.Label(self.header, text="IC Máquina", font=("Segoe UI", 19, "bold"))
+        self.title_label.pack(side="left")
+        self.subtitle_label = tk.Label(self.header, text="Controle de 3 eixos", font=("Segoe UI", 10))
+        self.subtitle_label.pack(side="left", padx=12, pady=(7, 0))
+        ttk.Button(self.header, text="Modo escuro", command=self.toggle_dark_mode).pack(side="right")
 
-        connection = tk.Frame(self.root, bg=PANEL, highlightbackground=BORDER, highlightthickness=1)
-        connection.pack(fill="x", padx=20, pady=(0, 10))
-        tk.Label(connection, text="CONEXÃO", bg=PANEL, fg=MUTED, font=("Segoe UI", 9, "bold")).grid(row=0, column=0, padx=14, pady=9, sticky="w")
-        ttk.Label(connection, text="Porta").grid(row=0, column=1, padx=(8, 4))
-        ttk.Entry(connection, textvariable=self.port_var, width=9).grid(row=0, column=2, padx=4)
-        ttk.Button(connection, text="Conectar", command=self.connect).grid(row=0, column=3, padx=5)
-        ttk.Button(connection, text="Desconectar", command=self.disconnect).grid(row=0, column=4, padx=5)
-        self.status_label = tk.Label(connection, textvariable=self.status_var, bg=PANEL, fg=MUTED, font=("Segoe UI", 9, "bold"))
-        self.status_label.grid(row=0, column=5, padx=15, sticky="w")
-        connection.columnconfigure(5, weight=1)
+        self.connection = ttk.LabelFrame(self.root, text="  Comunicação  ", padding=10)
+        self.connection.pack(fill="x", padx=20, pady=5)
+        ttk.Label(self.connection, text="Porta COM:").grid(row=0, column=0, padx=5)
+        ttk.Entry(self.connection, textvariable=self.port_var, width=9).grid(row=0, column=1, padx=5)
+        ttk.Button(self.connection, text="Conectar", command=self.connect).grid(row=0, column=2, padx=5)
+        ttk.Button(self.connection, text="Desconectar", command=self.disconnect).grid(row=0, column=3, padx=5)
+        self.status_label = tk.Label(self.connection, textvariable=self.status_var, font=("Segoe UI", 9, "bold"))
+        self.status_label.grid(row=0, column=4, padx=15, sticky="w")
+        self.connection.columnconfigure(4, weight=1)
 
         notebook = ttk.Notebook(self.root)
-        notebook.pack(fill="both", expand=True, padx=20, pady=5)
-        operation = ttk.Frame(notebook, padding=18)
-        points = ttk.Frame(notebook, padding=18)
-        calibration = ttk.Frame(notebook, padding=18)
-        notebook.add(operation, text="  Operação  ")
-        notebook.add(points, text="  Pontos  ")
-        notebook.add(calibration, text="  Calibração  ")
-        self._build_operation_tab(operation)
-        self._build_points_tab(points)
-        self._build_calibration_tab(calibration)
+        notebook.pack(fill="both", expand=True, padx=20, pady=8)
+        operation = ttk.Frame(notebook, padding=16)
+        points = ttk.Frame(notebook, padding=16)
+        calibration = ttk.Frame(notebook, padding=16)
+        notebook.add(operation, text="Operação")
+        notebook.add(points, text="Pontos")
+        notebook.add(calibration, text="Calibração")
+        self._build_operation(operation)
+        self._build_points(points)
+        self._build_calibration(calibration)
 
-        footer = tk.Frame(self.root, bg=PANEL_2)
-        footer.pack(fill="x", padx=20, pady=(5, 15))
-        tk.Label(footer, text="LOG", bg=PANEL_2, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(side="left", padx=12, pady=8)
-        tk.Label(footer, textvariable=self.log_var, bg=PANEL_2, fg=TEXT, anchor="w", font=("Segoe UI", 9)).pack(side="left", fill="x", expand=True, padx=4)
+        self.footer = tk.Frame(self.root)
+        self.footer.pack(fill="x", padx=20, pady=(2, 15))
+        self.log_title = tk.Label(self.footer, text="LOG:", font=("Segoe UI", 8, "bold"))
+        self.log_title.pack(side="left", padx=8, pady=7)
+        self.log_label = tk.Label(self.footer, textvariable=self.log_var, anchor="w", font=("Segoe UI", 9))
+        self.log_label.pack(side="left", fill="x", expand=True)
 
-    def _build_operation_tab(self, parent: ttk.Frame) -> None:
-        positions = ttk.LabelFrame(parent, text="  POSIÇÃO ESTIMADA  ")
+    def _build_operation(self, parent: ttk.Frame) -> None:
+        positions = ttk.LabelFrame(parent, text="  Posição estimada  ")
         positions.pack(fill="x", pady=(0, 12))
-        for column, axis in enumerate(("X", "Y", "Z")):
-            card = tk.Frame(positions, bg=PANEL_2, highlightbackground=BORDER, highlightthickness=1)
-            card.grid(row=0, column=column, padx=7, pady=10, sticky="nsew")
-            tk.Label(card, text=axis, bg=PANEL_2, fg=ACCENT, font=("Segoe UI", 12, "bold")).pack(padx=55, pady=(10, 2))
-            tk.Label(card, textvariable=self.position_vars[axis], bg=PANEL_2, fg=TEXT, font=("Consolas", 15, "bold")).pack(padx=35, pady=(0, 10))
-            positions.columnconfigure(column, weight=1)
+        for col, axis in enumerate("XYZ"):
+            card = tk.Frame(positions, highlightthickness=1)
+            card.grid(row=0, column=col, padx=7, pady=10, sticky="nsew")
+            tk.Label(card, text=axis, font=("Segoe UI", 12, "bold")).pack(padx=55, pady=(9, 2))
+            tk.Label(card, textvariable=self.position_vars[axis], font=("Consolas", 14, "bold")).pack(padx=35, pady=(0, 9))
+            positions.columnconfigure(col, weight=1)
 
-        manual = ttk.LabelFrame(parent, text="  CONTROLE MANUAL  ")
-        manual.pack(fill="x", pady=8)
-        ttk.Label(manual, text="Passos por comando:").grid(row=0, column=0, padx=7, pady=10)
+        manual = ttk.LabelFrame(parent, text="  Movimento incremental  ")
+        manual.pack(fill="x", pady=5)
+        ttk.Label(manual, text="Passos:").grid(row=0, column=0, padx=8, pady=8)
         ttk.Entry(manual, textvariable=self.step_var, width=10).grid(row=0, column=1)
-        ttk.Label(manual, text="Segure o botão para JOG; solte para STOP.").grid(row=0, column=2, columnspan=3, padx=15)
-        for row, axis in enumerate(("X", "Y", "Z"), start=1):
-            ttk.Label(manual, text=f"Eixo {axis}", font=("Segoe UI", 10, "bold")).grid(row=row, column=0, padx=7, pady=6)
-            minus = ttk.Button(manual, text=f"{axis}  −", width=13)
-            plus = ttk.Button(manual, text=f"{axis}  +", width=13)
+        for row, axis in enumerate("XYZ", start=1):
+            ttk.Label(manual, text=axis, font=("Segoe UI", 10, "bold")).grid(row=row, column=0, padx=8, pady=4)
+            minus = ttk.Button(manual, text=f"{axis} −", width=12)
+            plus = ttk.Button(manual, text=f"{axis} +", width=12)
             minus.grid(row=row, column=1, padx=5, pady=3)
             plus.grid(row=row, column=2, padx=5, pady=3)
             minus.bind("<ButtonPress-1>", lambda _e, a=axis: self.jog_start(a, -1))
             minus.bind("<ButtonRelease-1>", lambda _e: self.jog_stop())
             plus.bind("<ButtonPress-1>", lambda _e, a=axis: self.jog_start(a, 1))
             plus.bind("<ButtonRelease-1>", lambda _e: self.jog_stop())
+        tk.Button(parent, text="PARAR", command=self.stop, relief="flat", bd=0, font=("Segoe UI", 10, "bold")).pack(fill="x", pady=10, ipady=7)
 
-        stop = tk.Button(parent, text="PARAR MOVIMENTO", command=self.stop, bg=DANGER, fg="white", activebackground="#a12d31", activeforeground="white", relief="flat", bd=0, font=("Segoe UI", 10, "bold"), cursor="hand2")
-        stop.pack(fill="x", pady=12, ipady=8)
-
-        target = ttk.LabelFrame(parent, text="  IR PARA POSIÇÃO TEÓRICA  ")
-        target.pack(fill="x", pady=8)
-        ttk.Label(target, text="Eixo:").grid(row=0, column=0, padx=7, pady=10)
-        ttk.Combobox(target, values=("X", "Y", "Z"), state="readonly", width=5, textvariable=self.target_axis_var).grid(row=0, column=1, padx=5)
-        ttk.Label(target, text="Posição (mm):").grid(row=0, column=2, padx=7)
+        target = ttk.LabelFrame(parent, text="  Ir para posição teórica  ")
+        target.pack(fill="x", pady=5)
+        ttk.Label(target, text="Eixo:").grid(row=0, column=0, padx=5, pady=10)
+        ttk.Combobox(target, values=("X", "Y", "Z"), state="readonly", width=5, textvariable=self.target_axis_var).grid(row=0, column=1)
+        ttk.Label(target, text="Posição (mm):").grid(row=0, column=2, padx=5)
         ttk.Entry(target, textvariable=self.target_var, width=12).grid(row=0, column=3)
-        ttk.Button(target, text="Calcular / mover", command=self.move_to).grid(row=0, column=4, padx=8)
-        ttk.Button(parent, text="Zerar posição estimada", command=self.zero).pack(pady=7)
+        ttk.Button(target, text="Mover", command=self.move_to).grid(row=0, column=4, padx=8)
+        ttk.Button(parent, text="Zerar posição estimada", command=self.zero).pack(pady=6)
 
-    def _build_points_tab(self, parent: ttk.Frame) -> None:
-        ttk.Label(parent, text="Programa de análise", font=("Segoe UI", 15, "bold")).pack(anchor="w")
-        ttk.Label(parent, text="Cada ponto é X. A máquina irá: posicionar X → descer Z até o limite → subir Z → próximo X.", wraplength=850).pack(anchor="w", pady=(3, 12))
+    def _build_points(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Pontos de análise", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(parent, text="Para cada ponto: X → descer Z até o limite → subir Z → próximo ponto.").pack(anchor="w", pady=(3, 10))
         add = ttk.Frame(parent)
         add.pack(fill="x")
         ttk.Label(add, text="X (mm):").pack(side="left")
-        ttk.Entry(add, textvariable=self.point_x_var, width=12).pack(side="left", padx=6)
+        ttk.Entry(add, textvariable=self.point_x_var, width=12).pack(side="left", padx=5)
         ttk.Label(add, text="Nome:").pack(side="left")
-        ttk.Entry(add, textvariable=self.point_label_var, width=20).pack(side="left", padx=6)
-        ttk.Button(add, text="Adicionar", command=self.add_point).pack(side="left", padx=6)
+        ttk.Entry(add, textvariable=self.point_label_var, width=20).pack(side="left", padx=5)
+        ttk.Button(add, text="Adicionar", command=self.add_point).pack(side="left", padx=5)
         ttk.Button(add, text="Remover", command=self.remove_point).pack(side="left")
-        self.point_list = tk.Listbox(parent, height=12, bg=INPUT, fg=TEXT, selectbackground=ACCENT, selectforeground="white", relief="flat", highlightbackground=BORDER, highlightthickness=1, font=("Consolas", 10))
-        self.point_list.pack(fill="both", expand=True, pady=12)
-        options = ttk.LabelFrame(parent, text="  COMPORTAMENTO Z  ")
-        options.pack(fill="x", pady=5)
-        ttk.Label(options, text="Subida após tocar o botão (mm):").grid(row=0, column=0, padx=7, pady=10)
+        self.point_list = tk.Listbox(parent, height=12, relief="flat", font=("Consolas", 10))
+        self.point_list.pack(fill="both", expand=True, pady=10)
+        options = ttk.LabelFrame(parent, text="  Subida após o toque  ")
+        options.pack(fill="x")
+        ttk.Label(options, text="Distância (mm):").grid(row=0, column=0, padx=7, pady=9)
         ttk.Entry(options, textvariable=self.recovery_var, width=10).grid(row=0, column=1)
-        ttk.Label(options, text="Descida: Z −    •    Subida: Z +").grid(row=0, column=2, padx=18)
-        run = tk.Button(parent, text="INICIAR SEQUÊNCIA", command=self.start_sequence, bg=ACCENT, fg="white", activebackground=ACCENT_HOVER, activeforeground="white", relief="flat", bd=0, font=("Segoe UI", 10, "bold"), cursor="hand2")
-        run.pack(fill="x", pady=10, ipady=7)
+        ttk.Button(parent, text="Iniciar sequência", command=self.start_sequence).pack(fill="x", pady=9, ipady=5)
         ttk.Label(parent, textvariable=self.sequence_status_var).pack(anchor="w")
 
-    def _build_calibration_tab(self, parent: ttk.Frame) -> None:
-        ttk.Label(parent, text="Calibração dos eixos", font=("Segoe UI", 15, "bold")).pack(anchor="w")
-        ttk.Label(parent, text="Edite os valores experimentais de passos/mm. Eles substituem o valor teórico para os movimentos.", wraplength=850).pack(anchor="w", pady=(3, 12))
-        table = ttk.LabelFrame(parent, text="  PARÂMETROS  ")
-        table.pack(fill="x", pady=5)
-        for col, text in enumerate(("Eixo", "Passos/mm", "Observação")):
-            ttk.Label(table, text=text, font=("Segoe UI", 9, "bold")).grid(row=0, column=col, padx=25, pady=9)
-        for row, axis in enumerate(("X", "Y", "Z"), start=1):
-            ttk.Label(table, text=axis, font=("Segoe UI", 11, "bold")).grid(row=row, column=0, pady=8)
+    def _build_calibration(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="Calibração", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(parent, text="Altere os valores experimentais de passos/mm usados nos cálculos.").pack(anchor="w", pady=(3, 12))
+        table = ttk.LabelFrame(parent, text="  Passos por mm  ")
+        table.pack(fill="x")
+        for col, text in enumerate(("Eixo", "Passos/mm")):
+            ttk.Label(table, text=text, font=("Segoe UI", 9, "bold")).grid(row=0, column=col, padx=30, pady=8)
+        for row, axis in enumerate("XYZ", start=1):
+            ttk.Label(table, text=axis, font=("Segoe UI", 10, "bold")).grid(row=row, column=0, pady=7)
             ttk.Entry(table, textvariable=self.calibration_vars[axis], width=18).grid(row=row, column=1)
-            ttk.Label(table, text="valor experimental").grid(row=row, column=2, padx=15)
         ttk.Button(parent, text="Aplicar calibração", command=self.apply_calibration).pack(anchor="w", pady=10)
         ttk.Button(parent, text="Salvar calibração", command=self.save_calibration).pack(anchor="w")
-        ttk.Separator(parent).pack(fill="x", pady=15)
-        ttk.Label(parent, text="Modelo inicial: 200 passos/rev × 16 microsteps ÷ 8 mm/rev = 400 passos/mm.").pack(anchor="w")
-        ttk.Label(parent, text="Os 400 são apenas ponto de partida; os valores experimentais devem prevalecer.").pack(anchor="w", pady=3)
 
     def connect(self) -> None:
         try:
             controller = ArduinoController(self.port_var.get().strip())
             controller.connect()
             self.arduino = controller
-            self.status_var.set(f"CONECTADO  •  {controller.port}")
-            self.status_label.configure(fg=SUCCESS)
-            self.log_var.set("Arduino conectado. Ainda recomendamos testar comunicação sem motores.")
+            self.status_var.set(f"Arduino conectado — {controller.port}")
+            self.status_label.configure(fg="#23a559")
+            self.log_var.set("Conexão serial estabelecida.")
         except Exception as exc:
-            self.status_var.set("FALHA NA CONEXÃO")
-            self.status_label.configure(fg=DANGER)
+            self.status_var.set("Falha na conexão")
             messagebox.showerror("Arduino", str(exc))
 
     def disconnect(self) -> None:
         if self.arduino is not None:
             self.arduino.disconnect()
             self.arduino = None
-        self.status_var.set("MODO VIRTUAL  •  Arduino desconectado")
-        self.status_label.configure(fg=MUTED)
+        self.status_var.set("Modo virtual — Arduino desconectado")
+        self.status_label.configure(fg=DARK["muted"] if self.dark_mode else LIGHT["muted"])
         self.log_var.set("Arduino desconectado.")
 
     def _send_move(self, axis: str, direction: int, steps: int) -> None:
@@ -216,7 +194,7 @@ class MainWindow:
             return
         try:
             self.arduino.jog(axis, direction)
-            self.log_var.set(f"> JOG {axis} {direction} — solte para STOP")
+            self.log_var.set(f"> JOG {axis} {direction}")
         except Exception as exc:
             messagebox.showerror("JOG", str(exc))
 
@@ -230,7 +208,7 @@ class MainWindow:
             except Exception:
                 pass
         if update_log:
-            self.log_var.set("STOP enviado. Movimento interrompido.")
+            self.log_var.set("STOP enviado.")
 
     def move_to(self) -> None:
         try:
@@ -251,7 +229,7 @@ class MainWindow:
     def zero(self) -> None:
         self.machine.zero()
         self.refresh_positions()
-        self.log_var.set("Zero lógico definido nas posições atuais.")
+        self.log_var.set("Zero lógico definido.")
 
     def add_point(self) -> None:
         try:
@@ -283,7 +261,7 @@ class MainWindow:
                 raise ValueError
             self.sequence.start()
         except ValueError:
-            messagebox.showerror("Sequência", "A subida após o botão deve ser maior que zero.")
+            messagebox.showerror("Sequência", "A subida deve ser maior que zero.")
             return
         self.sequence_status_var.set("Sequência iniciada.")
         self.root.after(50, self._run_next_point)
@@ -300,9 +278,9 @@ class MainWindow:
                 self._send_move("X", movement["direction"], movement["microsteps"])
                 x_axis.move_to(point.x_mm)
                 self.refresh_positions()
-            self.sequence_status_var.set(f"Ponto {self.sequence.index + 1}/{len(self.sequence.points)}: X posicionado; descendo Z.")
+            self.sequence_status_var.set(f"Ponto {self.sequence.index + 1}/{len(self.sequence.points)}: descendo Z.")
             if self.arduino is None:
-                self.log_var.set("Modo virtual: SEEK_Z_DOWN (simulado) → limite → subida.")
+                self.log_var.set("Modo virtual: SEEK_Z_DOWN → limite → subida.")
             else:
                 response = self.arduino.send("SEEK_Z_DOWN")
                 self.log_var.set(f"> SEEK_Z_DOWN    < {response}")
@@ -314,7 +292,7 @@ class MainWindow:
             if self.sequence.advance():
                 self.root.after(100, self._run_next_point)
             else:
-                self.sequence_status_var.set("Sequência concluída com todos os pontos executados.")
+                self.sequence_status_var.set("Sequência concluída.")
         except Exception as exc:
             self.stop(update_log=False)
             self.sequence_status_var.set("Sequência interrompida por erro.")
@@ -322,16 +300,15 @@ class MainWindow:
 
     def apply_calibration(self) -> None:
         try:
-            for axis in ("X", "Y", "Z"):
-                value = float(self.calibration_vars[axis].get())
-                self.machine.get_axis(axis).set_calibration(value)
-            self.log_var.set("Calibração aplicada à máquina virtual.")
+            for axis in "XYZ":
+                self.machine.get_axis(axis).set_calibration(float(self.calibration_vars[axis].get()))
+            self.log_var.set("Calibração aplicada.")
         except ValueError:
-            messagebox.showerror("Calibração", "Todos os valores devem ser números positivos.")
+            messagebox.showerror("Calibração", "Os valores devem ser números positivos.")
 
     def save_calibration(self) -> None:
         self.apply_calibration()
-        data = {axis: self.machine.get_axis(axis).microsteps_per_mm for axis in ("X", "Y", "Z")}
+        data = {axis: self.machine.get_axis(axis).microsteps_per_mm for axis in "XYZ"}
         data["recovery_mm"] = self.recovery_mm
         CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
         self.log_var.set(f"Calibração salva em {CONFIG_FILE}.")
@@ -341,7 +318,7 @@ class MainWindow:
             return
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            for axis in ("X", "Y", "Z"):
+            for axis in "XYZ":
                 if axis in data:
                     self.machine.get_axis(axis).set_calibration(float(data[axis]))
             if "recovery_mm" in data:
@@ -358,25 +335,26 @@ class MainWindow:
         self._apply_theme()
 
     def _apply_theme(self) -> None:
-        dark = self.dark_mode
-        bg = BG if dark else "#f2f3f5"
-        panel = PANEL if dark else "#ffffff"
-        field = INPUT if dark else "#ffffff"
-        fg = TEXT if dark else "#232428"
-        muted = MUTED if dark else "#5c5f66"
-        self.root.configure(bg=bg)
-        self.style.configure(".", background=panel, foreground=fg, fieldbackground=field, font=("Segoe UI", 9))
-        self.style.configure("TFrame", background=panel)
-        self.style.configure("TLabel", background=panel, foreground=fg)
-        self.style.configure("TLabelframe", background=panel, foreground=muted, bordercolor=BORDER)
-        self.style.configure("TLabelframe.Label", background=panel, foreground=muted)
-        self.style.configure("TEntry", fieldbackground=field, foreground=fg, insertcolor=fg)
-        self.style.configure("TCombobox", fieldbackground=field, foreground=fg)
-        self.style.configure("TButton", background=panel_ if (panel_ := panel) else panel, foreground=fg, padding=(10, 6), borderwidth=0)
-        self.style.map("TButton", background=[("active", "#3f4147" if dark else "#e3e5e8")])
-        self.style.configure("TNotebook", background=bg, borderwidth=0)
-        self.style.configure("TNotebook.Tab", background=PANEL_2 if dark else "#e3e5e8", foreground=muted, padding=(16, 8))
-        self.style.map("TNotebook.Tab", background=[("selected", ACCENT)], foreground=[("selected", "white")])
+        theme = DARK if self.dark_mode else LIGHT
+        self.root.configure(bg=theme["bg"])
+        for widget in (self.header, self.footer):
+            widget.configure(bg=theme["bg"])
+        for widget in (self.title_label, self.subtitle_label, self.log_title, self.log_label):
+            widget.configure(bg=theme["bg"], fg=theme["fg"] if widget is self.title_label else theme["muted"])
+        self.style.configure(".", background=theme["panel"], foreground=theme["fg"], fieldbackground=theme["field"])
+        self.style.configure("TFrame", background=theme["panel"])
+        self.style.configure("TLabel", background=theme["panel"], foreground=theme["fg"])
+        self.style.configure("TLabelframe", background=theme["panel"], foreground=theme["muted"])
+        self.style.configure("TLabelframe.Label", background=theme["panel"], foreground=theme["muted"])
+        self.style.configure("TEntry", fieldbackground=theme["field"], foreground=theme["fg"])
+        self.style.configure("TCombobox", fieldbackground=theme["field"], foreground=theme["fg"])
+        self.style.configure("TNotebook", background=theme["bg"])
+        self.style.configure("TNotebook.Tab", background=theme["panel"], foreground=theme["muted"], padding=(14, 7))
+        self.style.map("TNotebook.Tab", background=[("selected", theme["accent"])], foreground=[("selected", "white")])
+        self.style.configure("TButton", background=theme["panel"], foreground=theme["fg"], padding=(9, 5))
+        self.style.map("TButton", background=[("active", theme["field"])])
+        self.status_label.configure(bg=theme["panel"], fg=theme["muted"])
+        self.connection.configure(style="TLabelframe")
 
     def close(self) -> None:
         self.stop(update_log=False)
