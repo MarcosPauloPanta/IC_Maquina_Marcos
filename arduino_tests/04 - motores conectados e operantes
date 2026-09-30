@@ -1,70 +1,20 @@
 // ============================================================
-// TESTE 03 (rev. 2) — CONTROLADOR DE MOTORES DA MÁQUINA
-// CNC Shield V3 + A4988 + Arduino Uno
+// CONTROLADOR DE MOTORES — CNC Shield V3 + A4988 + Arduino Uno
 // ============================================================
 //
-// MUDANÇAS DESTA REVISÃO
-// ----------------------
-//  [1] Polaridade dos botões definida em UM único lugar
-//      (LIMIT_ACTIVE_LEVEL). Novo comando LIMITS para diagnóstico.
-//  [2] JOG com "dead-man": expira sozinho se a GUI parar de
-//      renovar o comando (JOG_TIMEOUT_MS).
-//  [3] Limites de curso por SOFTWARE em X e Y, com contagem de
-//      posição em passos. Novos comandos POS e ZERO.
-//  [9] Drivers ficam DESABILITADOS por padrão: habilitam ao mover
-//      e desabilitam depois de IDLE_DISABLE_MS parados.
+// Este arquivo preserva o controlador que ja esta funcionando e
+// adiciona somente o necessario para a nova GUI:
 //
-// REGRA FUNDAMENTAL DO PROJETO
-// ----------------------------
-// SOMENTE UM EIXO PODE SE MOVIMENTAR POR VEZ.
+// - JOG continuo com velocidade configuravel;
+// - JOG_STOP imediato;
+// - MOVE com velocidade opcional;
+// - aproximacao do Z ate uma distancia definida;
+// - se o botao inferior do Z for acionado durante a aproximacao,
+//   o movimento para e o Z sobe automaticamente;
+// - somente UM eixo pode se movimentar por vez.
 //
-// ============================================================
-// PINAGEM — CNC SHIELD V3
-// ============================================================
-//
-//        STEP     DIR
-// X      D2       D5
-// Y      D3       D6
-// Z      D4       D7
-//
-// ENABLE = D8  (ativo em LOW: LOW = drivers habilitados)
-//
-// BOTÕES DO Z
-// -----------
-// Botão de cima  = A1
-// Botão de baixo = D11
-//
-// Usamos INPUT_PULLUP. O nível lido quando o botão está
-// ACIONADO depende do tipo de botão (veja LIMIT_ACTIVE_LEVEL).
-//
-// ============================================================
-// COMANDOS SERIAIS
-// ============================================================
-//
-// PING
-// STATUS
-// LIMITS                -> mostra o estado dos botões (diagnóstico)
-// POS                   -> mostra a posição (passos) de X, Y e Z
-// ZERO                  -> define a posição atual como origem (todos)
-// ZERO X                -> define a origem só do eixo X (idem Y, Z)
-// MOVE X 1 1000
-// MOVE X -1 1000
-// JOG X 1
-// JOG X -1
-// STOP
-// SEEK_Z_DOWN
-//
-// JOG (IMPORTANTE, mudou): a GUI deve reenviar "JOG X 1" a cada
-// ~100 ms enquanto o botão estiver pressionado, e enviar STOP ao
-// soltar. Se passar JOG_TIMEOUT_MS sem renovação, o Arduino para
-// sozinho e responde JOG_TIMEOUT. A renovação não gera resposta.
-//
-// RESPOSTAS NOVAS
-//   LIMIT_SOFT X_MAX     -> limite por software atingido (ou _MIN)
-//   ERR SOFT_LIMIT ROOM=n-> MOVE ultrapassaria o limite; sobram n passos
-//   JOG_TIMEOUT          -> JOG parou por falta de renovação
-//   LIMITS ... / POS ... / ACK ZERO
-//
+// Os botoes continuam sendo tratados pelo Arduino, portanto a
+// protecao fisica nao depende do Windows ou da GUI.
 // ============================================================
 
 const long BAUD_RATE = 115200;
@@ -74,101 +24,67 @@ const long BAUD_RATE = 115200;
 // -------------------------
 const uint8_t X_STEP = 2;
 const uint8_t X_DIR  = 5;
-
 const uint8_t Y_STEP = 3;
 const uint8_t Y_DIR  = 6;
-
 const uint8_t Z_STEP = 4;
 const uint8_t Z_DIR  = 7;
-
 const uint8_t ENABLE_PIN = 8;
 
 // -------------------------
-// Pinos dos limites físicos
+// Botoes fisicos do Z
 // -------------------------
 const uint8_t TOP_BUTTON    = A1;
 const uint8_t BOTTOM_BUTTON = 11;
 
-// ------------------------------------------------------------
-// [1] POLARIDADE DOS BOTÕES — ÚNICO LUGAR PARA AJUSTAR
-// ------------------------------------------------------------
-// Nível lido no pino quando o botão está ACIONADO:
-//   LOW  -> botão NA (normalmente aberto) ligado ao GND.
-//           Solto = HIGH, pressionado = LOW.
-//   HIGH -> botão NF (normalmente fechado) ligado ao GND.
-//           Solto = LOW, pressionado (circuito aberto) = HIGH.
-//           NF é mais seguro: fio rompido é lido como limite.
-//
-// Use o comando LIMITS para conferir antes de mover o Z.
-// ------------------------------------------------------------
+// Nivel lido quando o botao esta acionado.
 const uint8_t LIMIT_ACTIVE_LEVEL = HIGH;
 
 // -------------------------
-// Temporização do motor
+// Temporizacao
 // -------------------------
-// Quanto maior STEP_INTERVAL_US, mais devagar o motor gira.
-const unsigned int STEP_INTERVAL_US = 1500;
-const unsigned int STEP_PULSE_US    = 5;
+const unsigned int DEFAULT_STEP_INTERVAL_US = 1500;
+const unsigned int STEP_PULSE_US = 5;
 
-// ------------------------------------------------------------
-// [2] JOG dead-man
-// ------------------------------------------------------------
-// Tempo máximo sem receber uma renovação do JOG antes de parar.
-// A GUI deve renovar bem mais rápido que isso (ex.: a cada 100 ms).
+// JOG: a GUI precisa renovar o comando antes desse tempo.
 const unsigned long JOG_TIMEOUT_MS = 300;
 
-// ------------------------------------------------------------
-// [3] LIMITES DE CURSO POR SOFTWARE (X e Y)
-// ------------------------------------------------------------
-// Em PASSOS, relativos à ORIGEM (posição 0).
-// A origem é a posição do eixo quando o Arduino liga/reinicia
-// (atenção: abrir a porta serial no PC REINICIA o Uno!) ou
-// quando você manda ZERO.
-//
-// >>> AJUSTE ESTES VALORES ÀS DIMENSÕES REAIS DA MÁQUINA <<<
-// Os valores abaixo (±10000) são apenas um ponto de partida.
+// Limites por software de X e Y.
 const long X_MIN_STEPS = -10000;
 const long X_MAX_STEPS =  10000;
 const long Y_MIN_STEPS = -10000;
 const long Y_MAX_STEPS =  10000;
 
-// ------------------------------------------------------------
-// [9] CONTROLE DO ENABLE
-// ------------------------------------------------------------
-// Tempo parado até desabilitar os drivers (reduz calor).
+// Controle do ENABLE.
 const unsigned long IDLE_DISABLE_MS = 2000;
-// Tempo de espera após habilitar, antes do primeiro STEP.
 const unsigned int ENABLE_SETTLE_MS = 2;
 
 // ============================================================
-// ESTADO DO CONTROLADOR
+// ESTADO
 // ============================================================
 
-// moving = true significa que existe UM movimento em andamento.
 bool moving = false;
-
-// Qual eixo está sendo movimentado neste momento.
 char moving_axis = 'X';
-
-// +1 ou -1.
 int moving_direction = 1;
-
-// Quantos passos ainda faltam no comando MOVE.
 long remaining_steps = 0;
-
-// [2] true se o movimento atual é um JOG (sujeito ao timeout).
 bool jogging = false;
 unsigned long last_jog_ms = 0;
 
-// [3] Posição atual em passos (X, Y, Z), relativa à origem.
+// Velocidade atual do movimento em passos/s.
+unsigned long moving_speed_sps = 666;
+
+// Aproximacao Z: se o limite inferior for acionado, sobe.
+bool z_approach = false;
+long z_approach_remaining = 0;
+long z_retract_steps = 0;
+unsigned long z_approach_speed_sps = 200;
+
 long position_steps[3] = {0, 0, 0};
 
-// [9] Estado do ENABLE.
 bool drivers_enabled = false;
 unsigned long last_activity_ms = 0;
 
 // ============================================================
-// FUNÇÕES AUXILIARES
+// AUXILIARES
 // ============================================================
 
 uint8_t stepPin(char axis) {
@@ -193,9 +109,6 @@ uint8_t axisIndex(char axis) {
   return 2;
 }
 
-// ------------------------------------------------------------
-// [1] Leitura dos botões — a polaridade só existe AQUI.
-// ------------------------------------------------------------
 bool topPressed() {
   return digitalRead(TOP_BUTTON) == LIMIT_ACTIVE_LEVEL;
 }
@@ -204,61 +117,32 @@ bool bottomPressed() {
   return digitalRead(BOTTOM_BUTTON) == LIMIT_ACTIVE_LEVEL;
 }
 
-// ------------------------------------------------------------
-// Verifica se um limite físico impede a direção solicitada.
-// ------------------------------------------------------------
-// No Z:
-//   direção -1 -> descendo -> botão inferior
-//   direção +1 -> subindo  -> botão superior
-//
-// X e Y não possuem botões; usam limites por software (abaixo).
-// ------------------------------------------------------------
 bool limitPressed(char axis, int direction) {
-  if (axis != 'Z') {
-    return false;
-  }
-
-  if (direction < 0 && bottomPressed()) {
-    return true;
-  }
-
-  if (direction > 0 && topPressed()) {
-    return true;
-  }
-
+  if (axis != 'Z') return false;
+  if (direction < 0 && bottomPressed()) return true;
+  if (direction > 0 && topPressed()) return true;
   return false;
 }
 
-// ------------------------------------------------------------
-// [3] Limites por software
-// ------------------------------------------------------------
 bool hasSoftLimits(char axis) {
   return axis == 'X' || axis == 'Y';
 }
 
 long softMin(char axis) {
-  return (axis == 'X') ? X_MIN_STEPS : Y_MIN_STEPS;
+  return axis == 'X' ? X_MIN_STEPS : Y_MIN_STEPS;
 }
 
 long softMax(char axis) {
-  return (axis == 'X') ? X_MAX_STEPS : Y_MAX_STEPS;
+  return axis == 'X' ? X_MAX_STEPS : Y_MAX_STEPS;
 }
 
-// true se um passo nessa direção ultrapassaria o limite.
 bool softLimitBlocks(char axis, int direction) {
-  if (!hasSoftLimits(axis)) {
-    return false;
-  }
+  if (!hasSoftLimits(axis)) return false;
 
   long pos = position_steps[axisIndex(axis)];
 
-  if (direction > 0 && pos >= softMax(axis)) {
-    return true;
-  }
-
-  if (direction < 0 && pos <= softMin(axis)) {
-    return true;
-  }
+  if (direction > 0 && pos >= softMax(axis)) return true;
+  if (direction < 0 && pos <= softMin(axis)) return true;
 
   return false;
 }
@@ -270,88 +154,98 @@ void printSoftLimit(char axis, int direction) {
   Serial.println(direction > 0 ? F("MAX") : F("MIN"));
 }
 
-// ------------------------------------------------------------
-// [9] Controle do ENABLE dos drivers
-// ------------------------------------------------------------
+// Converte passos/s para intervalo entre pulsos.
+unsigned long speedToIntervalUs(unsigned long speed_sps) {
+  if (speed_sps == 0) speed_sps = 1;
+
+  unsigned long interval = 1000000UL / speed_sps;
+
+  // Reserva tempo para o pulso HIGH.
+  if (interval <= STEP_PULSE_US + 2) {
+    interval = STEP_PULSE_US + 2;
+  }
+
+  return interval;
+}
+
+bool validSpeed(long speed_sps) {
+  // Evita velocidades absurdamente baixas/altas e overflow.
+  return speed_sps >= 1 && speed_sps <= 10000;
+}
+
 void enableDrivers() {
   last_activity_ms = millis();
 
-  if (drivers_enabled) {
-    return;
-  }
+  if (drivers_enabled) return;
 
-  digitalWrite(ENABLE_PIN, LOW);   // LOW = habilitado
+  digitalWrite(ENABLE_PIN, LOW);
   drivers_enabled = true;
-  delay(ENABLE_SETTLE_MS);         // deixa o A4988 estabilizar
+  delay(ENABLE_SETTLE_MS);
 }
 
 void disableDrivers() {
-  digitalWrite(ENABLE_PIN, HIGH);  // HIGH = desabilitado
+  digitalWrite(ENABLE_PIN, HIGH);
   drivers_enabled = false;
 }
 
-// Chamada a cada volta do loop: desabilita após ficar parado.
 void autoDisableDrivers() {
-  if (moving || !drivers_enabled) {
-    return;
-  }
+  if (moving || !drivers_enabled) return;
 
   if (millis() - last_activity_ms >= IDLE_DISABLE_MS) {
     disableDrivers();
   }
 }
 
-// ------------------------------------------------------------
-// Gera UM pulso STEP.
-// ------------------------------------------------------------
-void pulseStep(char axis) {
+void pulseStep(char axis, unsigned long speed_sps) {
+  unsigned long interval_us = speedToIntervalUs(speed_sps);
+
   digitalWrite(stepPin(axis), HIGH);
   delayMicroseconds(STEP_PULSE_US);
   digitalWrite(stepPin(axis), LOW);
-  delayMicroseconds(STEP_INTERVAL_US);
+
+  unsigned long remaining_us = interval_us - STEP_PULSE_US;
+  if (remaining_us > 0) {
+    delayMicroseconds(remaining_us);
+  }
 }
 
-// ------------------------------------------------------------
-// Para qualquer movimento em andamento.
-// ------------------------------------------------------------
 void stopMotion() {
   moving = false;
   jogging = false;
+  z_approach = false;
   remaining_steps = 0;
-  last_activity_ms = millis();   // [9] começa a contar o ocioso
+  z_approach_remaining = 0;
+  last_activity_ms = millis();
 }
 
 // ============================================================
-// MOVIMENTO NORMAL — MOVE
+// MOVE
 // ============================================================
 
-void startMove(char axis, int direction, long steps) {
-  // Validação básica do comando.
+void startMove(char axis, int direction, long steps, unsigned long speed_sps) {
   if (!validAxis(axis) || steps <= 0 || (direction != 1 && direction != -1)) {
     Serial.println(F("ERR BAD_MOVE"));
     return;
   }
 
-  // REGRA DE SEGURANÇA MAIS IMPORTANTE:
-  // se qualquer eixo já estiver se movimentando, rejeitamos
-  // qualquer novo movimento.
+  if (!validSpeed((long)speed_sps)) {
+    Serial.println(F("ERR BAD_SPEED"));
+    return;
+  }
+
   if (moving) {
     Serial.println(F("ERR BUSY"));
     return;
   }
 
-  // Não começa se o limite físico correspondente já está acionado.
   if (limitPressed(axis, direction)) {
     Serial.println(F("LIMIT"));
     return;
   }
 
-  // [3] Limites por software: rejeita o MOVE inteiro se ele
-  // ultrapassaria o curso permitido (não move "até onde der").
   if (hasSoftLimits(axis)) {
     long pos = position_steps[axisIndex(axis)];
-    long room = (direction > 0) ? (softMax(axis) - pos)
-                                : (pos - softMin(axis));
+    long room = direction > 0 ? softMax(axis) - pos : pos - softMin(axis);
 
     if (room <= 0) {
       printSoftLimit(axis, direction);
@@ -365,87 +259,40 @@ void startMove(char axis, int direction, long steps) {
     }
   }
 
-  // [9] Habilita os drivers só agora que o movimento é válido.
   enableDrivers();
-
-  // Define a direção elétrica do driver.
   digitalWrite(dirPin(axis), direction > 0 ? HIGH : LOW);
 
   moving_axis = axis;
   moving_direction = direction;
   remaining_steps = steps;
+  moving_speed_sps = speed_sps;
   jogging = false;
+  z_approach = false;
   moving = true;
 
   Serial.println(F("ACK MOVE"));
 }
 
-// ------------------------------------------------------------
-// Executa o movimento sem bloquear o loop inteiro.
-// ------------------------------------------------------------
-void executeMotion() {
-  if (!moving) {
-    return;
-  }
-
-  // [2] Dead-man do JOG: sem renovação, para.
-  if (jogging && (millis() - last_jog_ms > JOG_TIMEOUT_MS)) {
-    stopMotion();
-    Serial.println(F("JOG_TIMEOUT"));
-    return;
-  }
-
-  // Limite físico (Z) ANTES de cada passo.
-  if (limitPressed(moving_axis, moving_direction)) {
-    stopMotion();
-    Serial.println(F("LIMIT"));
-    return;
-  }
-
-  // [3] Limite por software (X e Y) ANTES de cada passo.
-  if (softLimitBlocks(moving_axis, moving_direction)) {
-    stopMotion();
-    printSoftLimit(moving_axis, moving_direction);
-    return;
-  }
-
-  pulseStep(moving_axis);
-  position_steps[axisIndex(moving_axis)] += moving_direction;
-  remaining_steps--;
-
-  // Terminou a quantidade solicitada.
-  if (remaining_steps <= 0) {
-    stopMotion();
-    Serial.println(F("DONE"));
-  }
-}
-
 // ============================================================
-// JOG
-// ============================================================
-//
-// JOG é movimento manual, com dead-man.
-//
-// A GUI faz:
-//
-//   botão pressionado -> JOG X 1  (repetido a cada ~100 ms)
-//   botão solto       -> STOP
-//
-// Se o mesmo JOG (mesmo eixo e direção) chegar durante o
-// movimento, ele apenas RENOVA o timeout, sem resposta.
-// Se a renovação parar por mais de JOG_TIMEOUT_MS, o motor para.
+// JOG CONTINUO
 // ============================================================
 
-void startJog(char axis, int direction) {
+void startJog(char axis, int direction, unsigned long speed_sps) {
   if (!validAxis(axis) || (direction != 1 && direction != -1)) {
     Serial.println(F("ERR BAD_JOG"));
     return;
   }
 
+  if (!validSpeed((long)speed_sps)) {
+    Serial.println(F("ERR BAD_SPEED"));
+    return;
+  }
+
   if (moving) {
-    // [2] Renovação do JOG em andamento: silenciosa.
+    // Renovacao silenciosa do mesmo JOG.
     if (jogging && axis == moving_axis && direction == moving_direction) {
       last_jog_ms = millis();
+      moving_speed_sps = speed_sps;
       return;
     }
 
@@ -458,39 +305,146 @@ void startJog(char axis, int direction) {
     return;
   }
 
-  // [3] Já está no limite por software nessa direção?
   if (softLimitBlocks(axis, direction)) {
     printSoftLimit(axis, direction);
     return;
   }
 
-  // [9] Habilita os drivers.
   enableDrivers();
-
   digitalWrite(dirPin(axis), direction > 0 ? HIGH : LOW);
 
   moving_axis = axis;
   moving_direction = direction;
+  moving_speed_sps = speed_sps;
   remaining_steps = 2147483647L;
   jogging = true;
+  z_approach = false;
   last_jog_ms = millis();
   moving = true;
-
-  // Não enviamos ACK aqui, para não deixar resposta de JOG
-  // presa no buffer quando a GUI mandar STOP.
 }
 
 // ============================================================
-// BUSCA DO LIMITE INFERIOR DO Z
+// APROXIMACAO DO Z
 // ============================================================
 //
-// Enquanto o Z procura o botão:
-//   - verifica o botão;
-//   - verifica se chegou STOP;
-//   - gera um passo.
+// Comando:
+//   Z_APPROACH <passos_descida> <velocidade> <passos_recuo>
 //
-// Ao tocar o botão, retorna:      LIMIT Z_BOTTOM
-// Se receber STOP antes disso:    ACK STOP
+// Exemplo:
+//   Z_APPROACH 1000 200 100
+//
+// O Z desce no maximo 1000 passos.
+// Se o botao inferior for acionado antes disso:
+//   1. para a descida;
+//   2. sobe 100 passos automaticamente;
+//   3. informa LIMIT Z_BOTTOM_RETRACTED.
+//
+// Se terminar os 1000 passos sem tocar o botao:
+//   informa DONE Z_APPROACH.
+//
+// O valor dos passos ainda pode ser alterado depois na GUI.
+// ============================================================
+
+void startZApproach(long down_steps, unsigned long speed_sps, long retract_steps) {
+  if (down_steps <= 0 || retract_steps <= 0 || !validSpeed((long)speed_sps)) {
+    Serial.println(F("ERR BAD_Z_APPROACH"));
+    return;
+  }
+
+  if (moving) {
+    Serial.println(F("ERR BUSY"));
+    return;
+  }
+
+  // Se ja esta no botao inferior, nao forca mais a descida.
+  if (bottomPressed()) {
+    Serial.println(F("LIMIT Z_BOTTOM_ALREADY"));
+    return;
+  }
+
+  enableDrivers();
+  digitalWrite(Z_DIR, HIGH); // mesma direcao usada no controlador atual para descer
+
+  moving_axis = 'Z';
+  moving_direction = -1;
+  moving_speed_sps = speed_sps;
+  remaining_steps = down_steps;
+  z_approach_remaining = down_steps;
+  z_retract_steps = retract_steps;
+  z_approach_speed_sps = speed_sps;
+  jogging = false;
+  z_approach = true;
+  moving = true;
+
+  Serial.println(F("ACK Z_APPROACH"));
+}
+
+// Executa um passo do movimento atual.
+void executeMotion() {
+  if (!moving) return;
+
+  // ----------------------------------------------------------
+  // JOG dead-man
+  // ----------------------------------------------------------
+  if (jogging && millis() - last_jog_ms > JOG_TIMEOUT_MS) {
+    stopMotion();
+    Serial.println(F("JOG_TIMEOUT"));
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // Protecao do limite fisico do Z.
+  // ----------------------------------------------------------
+  if (limitPressed(moving_axis, moving_direction)) {
+    if (z_approach && moving_axis == 'Z' && moving_direction < 0) {
+      // Tocou o botao durante a aproximacao: para a descida e sobe.
+      moving_direction = 1;
+      moving_speed_sps = z_approach_speed_sps;
+      remaining_steps = z_retract_steps;
+      z_approach = false;
+      jogging = false;
+
+      digitalWrite(Z_DIR, LOW); // direcao inversa: subir
+      Serial.println(F("LIMIT Z_BOTTOM; RETRACT"));
+      return;
+    }
+
+    // Em qualquer outro movimento, para sem tentar continuar contra o botao.
+    stopMotion();
+    Serial.println(F("LIMIT"));
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // Limites por software X/Y.
+  // ----------------------------------------------------------
+  if (softLimitBlocks(moving_axis, moving_direction)) {
+    stopMotion();
+    printSoftLimit(moving_axis, moving_direction);
+    return;
+  }
+
+  pulseStep(moving_axis, moving_speed_sps);
+  position_steps[axisIndex(moving_axis)] += moving_direction;
+  remaining_steps--;
+
+  if (remaining_steps <= 0) {
+    bool was_retract = (moving_axis == 'Z' && moving_direction > 0 && !z_approach && z_retract_steps > 0);
+
+    stopMotion();
+
+    if (was_retract) {
+      Serial.println(F("DONE Z_RETRACT"));
+    } else if (moving_axis == 'Z') {
+      Serial.println(F("DONE Z_APPROACH"));
+    } else {
+      Serial.println(F("DONE"));
+    }
+  }
+}
+
+// ============================================================
+// SEEK Z DOWN — compatibilidade com o comando antigo
 // ============================================================
 
 void seekZDown() {
@@ -499,64 +453,29 @@ void seekZDown() {
     return;
   }
 
-  // [1] Se já começou com o botão acionado, não movimentamos o Z.
   if (bottomPressed()) {
     Serial.println(F("LIMIT Z_BOTTOM_ALREADY"));
     return;
   }
 
-  // [9] Habilita os drivers.
   enableDrivers();
+  digitalWrite(Z_DIR, HIGH);
 
-  digitalWrite(Z_DIR, HIGH); // direção definida como "descer"
   moving_axis = 'Z';
   moving_direction = -1;
+  moving_speed_sps = 200;
+  remaining_steps = 2147483647L;
   jogging = false;
+  z_approach = false;
   moving = true;
 
   Serial.println(F("ACK SEEK_Z_DOWN"));
-
-  while (moving) {
-    // ----------------------------------------------------------
-    // PRIMEIRO: segurança física.
-    // ----------------------------------------------------------
-    if (bottomPressed()) {
-      stopMotion();
-      Serial.println(F("LIMIT Z_BOTTOM"));
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // SEGUNDO: permite STOP vindo do computador.
-    // ----------------------------------------------------------
-    if (Serial.available()) {
-      String command = Serial.readStringUntil('\n');
-      command.trim();
-      command.toUpperCase();
-
-      if (command == "STOP") {
-        stopMotion();
-        Serial.println(F("ACK STOP"));
-        return;
-      }
-
-      // Durante a busca do Z não aceitamos outro movimento.
-      Serial.println(F("ERR BUSY"));
-    }
-
-    // ----------------------------------------------------------
-    // TERCEIRO: gera um passo e atualiza a posição.
-    // ----------------------------------------------------------
-    pulseStep('Z');
-    position_steps[2]--;
-  }
 }
 
 // ============================================================
-// DIAGNÓSTICO
+// DIAGNOSTICO
 // ============================================================
 
-// [1] Mostra o nível bruto e o estado interpretado dos botões.
 void printLimits() {
   Serial.print(F("LIMITS TOP="));
   Serial.print(topPressed() ? F("PRESSED") : F("FREE"));
@@ -568,7 +487,6 @@ void printLimits() {
   Serial.println(digitalRead(BOTTOM_BUTTON));
 }
 
-// [3] Mostra a posição atual em passos.
 void printPosition() {
   Serial.print(F("POS X="));
   Serial.print(position_steps[0]);
@@ -576,56 +494,42 @@ void printPosition() {
   Serial.print(position_steps[1]);
   Serial.print(F(" Z="));
   Serial.println(position_steps[2]);
-}// Resumo dos comandos disponíveis.
+}
+
 void printHelp() {
   Serial.println(F("=== COMANDOS ==="));
-  Serial.println(F("PING            -> responde PONG (teste de comunicacao)"));
-  Serial.println(F("STATUS          -> IDLE ou BUSY <eixo>"));
-  Serial.println(F("HELP            -> mostra este resumo"));
-  Serial.println(F("LIMITS          -> estado dos botoes do Z (bruto e interpretado)"));
-  Serial.println(F("POS             -> posicao X, Y, Z em passos"));
-  Serial.println(F("ZERO            -> zera a posicao de todos os eixos"));
-  Serial.println(F("ZERO <X|Y|Z>    -> zera a posicao de um eixo"));
-  Serial.println(F("MOVE <eixo> <dir> <passos> -> ex.: MOVE X 1 1000 (dir = 1 ou -1)"));
-  Serial.println(F("JOG <eixo> <dir>-> movimento continuo; renovar a cada ~100 ms"));
-  Serial.println(F("STOP            -> para qualquer movimento"));
-  Serial.println(F("SEEK_Z_DOWN     -> Z desce ate o botao inferior"));
-  Serial.println(F("=== RESPOSTAS ==="));
-  Serial.println(F("ACK ...         -> comando aceito"));
-  Serial.println(F("DONE            -> MOVE concluido"));
-  Serial.println(F("LIMIT ...       -> botao fisico do Z acionado"));
-  Serial.println(F("LIMIT_SOFT ...  -> limite de curso por software (X/Y)"));
-  Serial.println(F("JOG_TIMEOUT     -> JOG parou por falta de renovacao"));
-  Serial.println(F("ERR BUSY        -> ja existe um movimento em andamento"));
-  Serial.println(F("ERR SOFT_LIMIT  -> MOVE passaria do curso (ROOM = passos livres)"));
-  Serial.println(F("ERR BAD_*       -> parametros invalidos"));
+  Serial.println(F("PING"));
+  Serial.println(F("STATUS"));
+  Serial.println(F("LIMITS"));
+  Serial.println(F("POS"));
+  Serial.println(F("ZERO ou ZERO X/Y/Z"));
+  Serial.println(F("MOVE X 1 1000"));
+  Serial.println(F("MOVE X 1 1000 500"));
+  Serial.println(F("JOG X 1"));
+  Serial.println(F("JOG_START X 1 500"));
+  Serial.println(F("JOG_STOP"));
+  Serial.println(F("STOP"));
+  Serial.println(F("SEEK_Z_DOWN"));
+  Serial.println(F("Z_APPROACH 1000 200 100"));
   Serial.println(F("=== FIM ==="));
 }
 
 // ============================================================
-// INTERPRETADOR DE COMANDOS
+// INTERPRETADOR
 // ============================================================
 
 void handleCommand(String command) {
   command.trim();
   command.toUpperCase();
 
-  if (command.length() == 0) {
-    return;
-  }
+  if (command.length() == 0) return;
 
-  // ----------------------------------------------------------
-  // Teste simples de comunicação.
-  // ----------------------------------------------------------
   if (command == "PING") {
     Serial.println(F("PONG"));
     return;
-  }  // ----------------------------------------------------------
-  // Resumo dos comandos.
-  // ----------------------------------------------------------
+  }
+
   if (command == "HELP") {
-    // Enviar ~1,3 KB pela serial leva ~100 ms e travaria o motor
-    // no meio do movimento, então só respondemos parado.
     if (moving) {
       Serial.println(F("ERR BUSY"));
       return;
@@ -634,9 +538,6 @@ void handleCommand(String command) {
     return;
   }
 
-  // ----------------------------------------------------------
-  // Estado atual do Arduino.
-  // ----------------------------------------------------------
   if (command == "STATUS") {
     if (moving) {
       Serial.print(F("BUSY "));
@@ -647,9 +548,6 @@ void handleCommand(String command) {
     return;
   }
 
-  // ----------------------------------------------------------
-  // [1] Diagnóstico dos botões e [3] posição.
-  // ----------------------------------------------------------
   if (command == "LIMITS") {
     printLimits();
     return;
@@ -660,18 +558,12 @@ void handleCommand(String command) {
     return;
   }
 
-  // ----------------------------------------------------------
-  // Parada geral.
-  // ----------------------------------------------------------
-  if (command == "STOP") {
+  if (command == "STOP" || command == "JOG_STOP") {
     stopMotion();
     Serial.println(F("ACK STOP"));
     return;
   }
 
-  // ----------------------------------------------------------
-  // [3] ZERO: define a posição atual como origem (todos os eixos).
-  // ----------------------------------------------------------
   if (command == "ZERO") {
     if (moving) {
       Serial.println(F("ERR BUSY"));
@@ -685,9 +577,6 @@ void handleCommand(String command) {
     return;
   }
 
-  // ----------------------------------------------------------
-  // Busca do botão inferior do Z.
-  // ----------------------------------------------------------
   if (command == "SEEK_Z_DOWN") {
     seekZDown();
     return;
@@ -696,10 +585,10 @@ void handleCommand(String command) {
   char axis;
   int direction;
   long steps;
+  long speed;
+  long retract;
 
-  // ----------------------------------------------------------
-  // [3] ZERO EIXO — Exemplo: ZERO X
-  // ----------------------------------------------------------
+  // ZERO X/Y/Z
   if (sscanf(command.c_str(), "ZERO %c", &axis) == 1) {
     if (!validAxis(axis)) {
       Serial.println(F("ERR BAD_ZERO"));
@@ -716,21 +605,49 @@ void handleCommand(String command) {
     return;
   }
 
-  // ----------------------------------------------------------
-  // MOVE EIXO DIREÇÃO PASSOS
-  // Exemplo: MOVE X 1 1000
-  // ----------------------------------------------------------
-  if (sscanf(command.c_str(), "MOVE %c %d %ld", &axis, &direction, &steps) == 3) {
-    startMove(axis, direction, steps);
+  // MOVE eixo direcao passos velocidade
+  if (sscanf(command.c_str(), "MOVE %c %d %ld %ld", &axis, &direction, &steps, &speed) == 4) {
+    startMove(axis, direction, steps, (unsigned long)speed);
     return;
   }
 
-  // ----------------------------------------------------------
-  // JOG EIXO DIREÇÃO
-  // Exemplo: JOG Z -1
-  // ----------------------------------------------------------
+  // Compatibilidade com MOVE antigo: velocidade padrao.
+  if (sscanf(command.c_str(), "MOVE %c %d %ld", &axis, &direction, &steps) == 3) {
+    startMove(axis, direction, steps, 1000);
+    return;
+  }
+
+  // Novo JOG continuo: JOG_START X 1 500
+  if (sscanf(command.c_str(), "JOG_START %c %d %ld", &axis, &direction, &speed) == 3) {
+    startJog(axis, direction, (unsigned long)speed);
+    return;
+  }
+
+  // Compatibilidade com JOG antigo: velocidade padrao.
   if (sscanf(command.c_str(), "JOG %c %d", &axis, &direction) == 2) {
-    startJog(axis, direction);
+    startJog(axis, direction, 200);
+    return;
+  }
+
+  // Aproximacao Z: distancia de descida, velocidade e recuo.
+  if (sscanf(command.c_str(), "Z_APPROACH %ld %ld %ld", &steps, &speed, &retract) == 3) {
+    startZApproach(steps, (unsigned long)speed, retract);
+    return;
+  }
+
+  // Z_RETRACT passos velocidade
+  if (sscanf(command.c_str(), "Z_RETRACT %ld %ld", &steps, &speed) == 2) {
+    if (moving) {
+      Serial.println(F("ERR BUSY"));
+      return;
+    }
+
+    if (steps <= 0 || !validSpeed(speed)) {
+      Serial.println(F("ERR BAD_Z_RETRACT"));
+      return;
+    }
+
+    startMove('Z', 1, steps, (unsigned long)speed);
     return;
   }
 
@@ -742,14 +659,11 @@ void handleCommand(String command) {
 // ============================================================
 
 void setup() {
-  // [9] PRIMEIRA coisa: drivers DESABILITADOS (HIGH).
-  // Escrever HIGH antes do pinMode evita um pulso LOW no pino.
   digitalWrite(ENABLE_PIN, HIGH);
   pinMode(ENABLE_PIN, OUTPUT);
   digitalWrite(ENABLE_PIN, HIGH);
   drivers_enabled = false;
 
-  // Pinos dos motores como saída.
   pinMode(X_STEP, OUTPUT);
   pinMode(X_DIR, OUTPUT);
   pinMode(Y_STEP, OUTPUT);
@@ -757,41 +671,31 @@ void setup() {
   pinMode(Z_STEP, OUTPUT);
   pinMode(Z_DIR, OUTPUT);
 
-  // Estado inicial seguro dos sinais STEP.
   digitalWrite(X_STEP, LOW);
   digitalWrite(Y_STEP, LOW);
   digitalWrite(Z_STEP, LOW);
 
-  // Pinos dos botões com resistor pull-up interno.
   pinMode(TOP_BUTTON, INPUT_PULLUP);
   pinMode(BOTTOM_BUTTON, INPUT_PULLUP);
 
   last_activity_ms = millis();
 
-  // Inicializa comunicação USB/serial.
   Serial.begin(BAUD_RATE);
-
-  // Timeout curto para leitura de comandos.
   Serial.setTimeout(50);
 
   Serial.println(F("READY MOTOR_CONTROLLER"));
 }
 
 // ============================================================
-// LOOP PRINCIPAL
+// LOOP
 // ============================================================
 
 void loop() {
-  // Primeiro verificamos se o computador enviou um comando.
   if (Serial.available()) {
     String command = Serial.readStringUntil('\n');
     handleCommand(command);
   }
 
-  // Depois executamos UM passo do movimento atual.
-  // Nunca existe X + Y + Z ao mesmo tempo.
   executeMotion();
-
-  // [9] Desabilita os drivers se ficou parado tempo suficiente.
   autoDisableDrivers();
 }
