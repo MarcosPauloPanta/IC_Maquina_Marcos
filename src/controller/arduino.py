@@ -7,16 +7,7 @@ from typing import Optional
 
 
 class ArduinoController:
-    """Comunicação serial entre a GUI e o Arduino.
-
-    O thread interno é o único leitor da porta. A GUI apenas consulta a fila.
-    O protocolo de movimento contínuo usa:
-        JOG_START <axis> <direction> <steps_per_second>
-        JOG_STOP
-        MOVE <axis> <steps> <steps_per_second>
-        Z_APPROACH <steps_per_second>
-        Z_RETRACT <steps> <steps_per_second>
-    """
+    """Comunicação serial simples entre a GUI e o Arduino."""
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.25):
         self.port = port
@@ -36,9 +27,7 @@ class ArduinoController:
         try:
             import serial
         except ImportError as exc:
-            raise RuntimeError(
-                "PySerial não está instalado. Execute: pip install -r requirements.txt"
-            ) from exc
+            raise RuntimeError("PySerial não está instalado. Execute: pip install -r requirements.txt") from exc
 
         if self.is_connected:
             return
@@ -56,11 +45,7 @@ class ArduinoController:
             raise RuntimeError(f"Arduino respondeu algo inesperado ao PING: {response!r}")
 
         self._reader_stop.clear()
-        self._reader_thread = threading.Thread(
-            target=self._reader_loop,
-            name="arduino-serial-reader",
-            daemon=True,
-        )
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
     def disconnect(self) -> None:
@@ -70,19 +55,15 @@ class ArduinoController:
             if self.is_connected:
                 try:
                     self.send_nowait("JOG_STOP")
-                except Exception:
-                    pass
-                try:
                     self.send_nowait("STOP")
                 except Exception:
                     pass
                 time.sleep(0.02)
         finally:
             self._reader_stop.set()
-            thread = self._reader_thread
+            if self._reader_thread is not None and self._reader_thread.is_alive():
+                self._reader_thread.join(timeout=0.5)
             self._reader_thread = None
-            if thread is not None and thread.is_alive():
-                thread.join(timeout=0.5)
             try:
                 if self._serial.is_open:
                     self._serial.close()
@@ -111,15 +92,17 @@ class ArduinoController:
                 if text:
                     self._rx_queue.put(text)
 
-    def _write_line(self, command: str) -> str:
-        line = command.strip()
-        if not line:
+    def _write_line(self, command: str) -> None:
+        command = command.strip()
+        if not command:
             raise ValueError("Comando vazio.")
         if not self.is_connected:
             raise RuntimeError("Arduino não conectado.")
-        self._serial.write((line + "\n").encode("ascii"))
+        self._serial.write((command + "\n").encode("ascii"))
         self._serial.flush()
-        return line
+
+    def send_nowait(self, command: str) -> None:
+        self._write_line(command)
 
     def send(self, command: str) -> str:
         with self._command_lock:
@@ -131,23 +114,19 @@ class ArduinoController:
                     return self._rx_queue.get(timeout=0.05)
                 except queue.Empty:
                     continue
-        raise TimeoutError(f"Arduino não respondeu ao comando: {command.strip()}")
-
-    def send_nowait(self, command: str) -> None:
-        self._write_line(command)
+        raise TimeoutError(f"Arduino não respondeu: {command.strip()}")
 
     def read_available(self) -> list[str]:
-        if not self._command_lock.acquire(blocking=False):
-            return []
-        try:
-            lines: list[str] = []
-            while True:
-                try:
-                    lines.append(self._rx_queue.get_nowait())
-                except queue.Empty:
-                    return lines
-        finally:
-            self._command_lock.release()
+        lines: list[str] = []
+        while True:
+            try:
+                lines.append(self._rx_queue.get_nowait())
+            except queue.Empty:
+                return lines
+
+    # ------------------------------------------------------------
+    # JOG
+    # ------------------------------------------------------------
 
     def jog_start(self, axis: str, direction: int, speed_steps_s: int) -> None:
         axis = axis.upper()
@@ -155,20 +134,23 @@ class ArduinoController:
             raise ValueError("Eixo inválido. Use X, Y ou Z.")
         if speed_steps_s <= 0:
             raise ValueError("A velocidade deve ser positiva.")
-        self.send_nowait(f"JOG_START {axis} {1 if direction > 0 else -1} {speed_steps_s}")
+        self.send_nowait(f"JOG_START {axis} {1 if direction > 0 else -1} {int(speed_steps_s)}")
 
     def jog_stop(self) -> None:
         if self.is_connected:
             self.send_nowait("JOG_STOP")
 
     def jog(self, axis: str, direction: int) -> None:
-        """Compatibilidade com o comando antigo de JOG."""
         self.jog_start(axis, direction, 200)
 
     def stop(self) -> None:
         if self.is_connected:
             self.send_nowait("JOG_STOP")
             self.send_nowait("STOP")
+
+    # ------------------------------------------------------------
+    # Movimento discreto
+    # ------------------------------------------------------------
 
     def move_steps(self, axis: str, steps: int, speed_steps_s: int) -> None:
         axis = axis.upper()
@@ -178,10 +160,10 @@ class ArduinoController:
             raise ValueError("A velocidade deve ser positiva.")
         self.send_nowait(f"MOVE {axis} {int(steps)} {int(speed_steps_s)}")
 
-    def z_approach(self, speed_steps_s: int) -> None:
-        if speed_steps_s <= 0:
-            raise ValueError("A velocidade deve ser positiva.")
-        self.send_nowait(f"Z_APPROACH {int(speed_steps_s)}")
+    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int) -> None:
+        if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
+            raise ValueError("Passos, velocidade e recuo devem ser positivos.")
+        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
 
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
         if steps <= 0 or speed_steps_s <= 0:
