@@ -11,8 +11,10 @@ class ArduinoController:
 
     A porta é aberta uma única vez. Um thread dedicado somente lê a serial
     e coloca as linhas recebidas em uma fila; a GUI apenas consulta essa fila.
-    Isso evita que a leitura serial bloqueie o Tkinter e torna o Terminal
-    adequado para respostas assíncronas do Arduino.
+
+    Quando send() espera uma resposta específica, a GUI não pode retirar essa
+    resposta da fila ao mesmo tempo. Por isso existe um lock de comando:
+    enquanto send() estiver esperando, _poll_serial() não consome a fila.
     """
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.25):
@@ -23,6 +25,7 @@ class ArduinoController:
         self._rx_queue: queue.Queue[str] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
         self._reader_stop = threading.Event()
+        self._command_lock = threading.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -41,8 +44,8 @@ class ArduinoController:
 
         self._serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
 
-        # Abrir uma porta USB-serial com Arduino Uno normalmente reinicia a placa.
-        # Esperamos o boot terminar e descartamos mensagens antigas antes do PING.
+        # Abrir a COM do Uno normalmente reinicia a placa.
+        # Esperamos o boot e descartamos mensagens antigas antes do PING.
         time.sleep(2.0)
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
@@ -55,6 +58,7 @@ class ArduinoController:
             self._serial = None
             raise RuntimeError(f"Arduino respondeu algo inesperado ao PING: {response!r}")
 
+        # Só iniciamos o leitor depois do PING inicial.
         self._reader_stop.clear()
         self._reader_thread = threading.Thread(
             target=self._reader_loop,
@@ -126,16 +130,21 @@ class ArduinoController:
         return line
 
     def send(self, command: str) -> str:
-        """Envia um comando e espera a próxima resposta recebida."""
-        self._clear_rx_queue()
-        self._write_line(command)
-        deadline = time.monotonic() + max(self.timeout, 0.5)
+        """Envia um comando e espera a próxima resposta recebida.
 
-        while time.monotonic() < deadline:
-            try:
-                return self._rx_queue.get(timeout=0.05)
-            except queue.Empty:
-                continue
+        O lock impede que _poll_serial() retire a resposta da fila antes
+        deste método conseguir recebê-la.
+        """
+        with self._command_lock:
+            self._clear_rx_queue()
+            self._write_line(command)
+            deadline = time.monotonic() + max(self.timeout, 0.5)
+
+            while time.monotonic() < deadline:
+                try:
+                    return self._rx_queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
 
         raise TimeoutError(f"Arduino não respondeu ao comando: {command.strip()}")
 
@@ -144,13 +153,18 @@ class ArduinoController:
         self._write_line(command)
 
     def read_available(self) -> list[str]:
-        """Retorna todas as linhas recebidas desde a última consulta da GUI."""
-        lines: list[str] = []
-        while True:
-            try:
-                lines.append(self._rx_queue.get_nowait())
-            except queue.Empty:
-                return lines
+        """Retorna linhas recebidas que não pertencem a um send() em andamento."""
+        if not self._command_lock.acquire(blocking=False):
+            return []
+        try:
+            lines: list[str] = []
+            while True:
+                try:
+                    lines.append(self._rx_queue.get_nowait())
+                except queue.Empty:
+                    return lines
+        finally:
+            self._command_lock.release()
 
     def jog(self, axis: str, direction: int) -> None:
         axis = axis.upper()
