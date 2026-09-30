@@ -7,7 +7,7 @@ from typing import Optional
 
 
 class ArduinoController:
-    """Comunicação serial simples entre a GUI e o Arduino."""
+    """Comunicação serial entre a GUI e o Arduino."""
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.25):
         self.port = port
@@ -124,6 +124,22 @@ class ArduinoController:
             except queue.Empty:
                 return lines
 
+    def wait_for_motion(self, timeout_s: float = 60.0) -> str:
+        """Espera o término do movimento que já foi enviado ao Arduino."""
+        deadline = time.monotonic() + timeout_s
+        last_line = ""
+        while time.monotonic() < deadline:
+            try:
+                line = self._rx_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            last_line = line
+            if line.startswith("DONE") or line in {"LIMIT", "LIMIT_SOFT", "JOG_TIMEOUT"}:
+                return line
+            if line.startswith("ERR"):
+                raise RuntimeError(line)
+        raise TimeoutError("Arduino não concluiu o movimento dentro do tempo esperado.")
+
     # ------------------------------------------------------------
     # JOG
     # ------------------------------------------------------------
@@ -160,15 +176,22 @@ class ArduinoController:
             raise ValueError("A velocidade deve ser positiva.")
         self.send_nowait(f"MOVE {axis} {int(steps)} {int(speed_steps_s)}")
 
-    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int) -> None:
-        if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
-            raise ValueError("Passos, velocidade e recuo devem ser positivos.")
-        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
+    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int) -> None:
+        if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0 or dwell_ms < 0:
+            raise ValueError("Parâmetros do Z inválidos.")
+        self.send_nowait(
+            f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)} {int(dwell_ms)}"
+        )
 
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
         if steps <= 0 or speed_steps_s <= 0:
             raise ValueError("Passos e velocidade devem ser positivos.")
         self.send_nowait(f"Z_RETRACT {int(steps)} {int(speed_steps_s)}")
+
+    def request_position(self) -> None:
+        """Solicita POS sem bloquear a GUI."""
+        if self.is_connected:
+            self.send_nowait("POS")
 
     def ping(self) -> str:
         return self.send("PING")
