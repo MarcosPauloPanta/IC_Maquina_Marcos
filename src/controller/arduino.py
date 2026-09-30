@@ -17,7 +17,6 @@ class ArduinoController:
         self._rx_queue: queue.Queue[str] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
         self._reader_stop = threading.Event()
-        self._command_lock = threading.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -28,10 +27,8 @@ class ArduinoController:
             import serial
         except ImportError as exc:
             raise RuntimeError("PySerial não está instalado. Execute: pip install -r requirements.txt") from exc
-
         if self.is_connected:
             return
-
         self._serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
         time.sleep(2.0)
         self._serial.reset_input_buffer()
@@ -43,7 +40,6 @@ class ArduinoController:
             self._serial.close()
             self._serial = None
             raise RuntimeError(f"Arduino respondeu algo inesperado ao PING: {response!r}")
-
         self._reader_stop.clear()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -105,15 +101,14 @@ class ArduinoController:
         self._write_line(command)
 
     def send(self, command: str) -> str:
-        with self._command_lock:
-            self._clear_rx_queue()
-            self._write_line(command)
-            deadline = time.monotonic() + max(self.timeout, 0.5)
-            while time.monotonic() < deadline:
-                try:
-                    return self._rx_queue.get(timeout=0.05)
-                except queue.Empty:
-                    continue
+        self._clear_rx_queue()
+        self._write_line(command)
+        deadline = time.monotonic() + max(self.timeout, 0.5)
+        while time.monotonic() < deadline:
+            try:
+                return self._rx_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
         raise TimeoutError(f"Arduino não respondeu: {command.strip()}")
 
     def read_available(self) -> list[str]:
@@ -124,25 +119,20 @@ class ArduinoController:
             except queue.Empty:
                 return lines
 
-    def wait_for_motion(self, timeout_s: float = 60.0) -> str:
-        """Espera o término do movimento que já foi enviado ao Arduino."""
+    def wait_for_motion(self, timeout_s: float = 120.0, ready_prefix: str | None = None) -> str:
         deadline = time.monotonic() + timeout_s
-        last_line = ""
         while time.monotonic() < deadline:
             try:
                 line = self._rx_queue.get(timeout=0.05)
             except queue.Empty:
                 continue
-            last_line = line
-            if line.startswith("DONE") or line in {"LIMIT", "LIMIT_SOFT", "JOG_TIMEOUT"}:
-                return line
             if line.startswith("ERR"):
                 raise RuntimeError(line)
+            if ready_prefix and line.startswith(ready_prefix):
+                return line
+            if line.startswith("DONE") or line in {"LIMIT", "LIMIT_SOFT", "JOG_TIMEOUT"}:
+                return line
         raise TimeoutError("Arduino não concluiu o movimento dentro do tempo esperado.")
-
-    # ------------------------------------------------------------
-    # JOG
-    # ------------------------------------------------------------
 
     def jog_start(self, axis: str, direction: int, speed_steps_s: int) -> None:
         axis = axis.upper()
@@ -164,32 +154,37 @@ class ArduinoController:
             self.send_nowait("JOG_STOP")
             self.send_nowait("STOP")
 
-    # ------------------------------------------------------------
-    # Movimento discreto
-    # ------------------------------------------------------------
-
     def move_steps(self, axis: str, steps: int, speed_steps_s: int) -> None:
         axis = axis.upper()
         if axis not in {"X", "Y", "Z"}:
             raise ValueError("Eixo inválido. Use X, Y ou Z.")
         if speed_steps_s <= 0:
             raise ValueError("A velocidade deve ser positiva.")
+        self._clear_rx_queue()
         self.send_nowait(f"MOVE {axis} {int(steps)} {int(speed_steps_s)}")
+        result = self.wait_for_motion()
+        if result.startswith("LIMIT"):
+            raise RuntimeError(result)
 
-    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int) -> None:
-        if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0 or dwell_ms < 0:
+    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> None:
+        if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
-        self.send_nowait(
-            f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)} {int(dwell_ms)}"
-        )
+        self._clear_rx_queue()
+        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
+        result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
+        if not result.startswith("Z_APPROACH_READY"):
+            raise RuntimeError(result)
 
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
         if steps <= 0 or speed_steps_s <= 0:
             raise ValueError("Passos e velocidade devem ser positivos.")
+        self._clear_rx_queue()
         self.send_nowait(f"Z_RETRACT {int(steps)} {int(speed_steps_s)}")
+        result = self.wait_for_motion()
+        if result.startswith("LIMIT"):
+            raise RuntimeError(result)
 
     def request_position(self) -> None:
-        """Solicita POS sem bloquear a GUI."""
         if self.is_connected:
             self.send_nowait("POS")
 
