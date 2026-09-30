@@ -17,17 +17,29 @@ class SpatialMap:
         self.selected_index: int | None = None
         self.shape_var = tk.StringVar(value="Círculo")
         self.size_var = tk.StringVar(value=f"{self.DEFAULT_SIZE_MM:.2f}")
-        self.canvas_size = 560
+        self.canvas_size = 500
         self.margin = 55
 
-        self.frame = ttk.Frame(parent, padding=18)
-        self.frame.pack(fill="both", expand=True)
+        # Área rolável, semelhante a uma página web: quando a janela fica
+        # menor que o conteúdo, o usuário pode descer/subir com a barra.
+        self.outer = ttk.Frame(parent)
+        self.outer.pack(fill="both", expand=True)
+        self.page_canvas = tk.Canvas(self.outer, highlightthickness=0, bd=0)
+        self.page_scroll = ttk.Scrollbar(self.outer, orient="vertical", command=self.page_canvas.yview)
+        self.page = ttk.Frame(self.page_canvas, padding=14)
+        self.page_window = self.page_canvas.create_window((0, 0), window=self.page, anchor="nw")
+        self.page_canvas.configure(yscrollcommand=self.page_scroll.set)
+        self.page_canvas.pack(side="left", fill="both", expand=True)
+        self.page_scroll.pack(side="right", fill="y")
+        self.page.bind("<Configure>", lambda _e: self.page_canvas.configure(scrollregion=self.page_canvas.bbox("all")))
+        self.page_canvas.bind("<Configure>", self._resize_page)
+        self.page_canvas.bind_all("<MouseWheel>", self._scroll_page, add="+")
 
-        header = ttk.Frame(self.frame)
-        header.pack(fill="x", pady=(0, 10))
+        header = ttk.Frame(self.page)
+        header.pack(fill="x", pady=(0, 8))
         ttk.Label(header, text="Mapa Espacial", font=("Segoe UI", 18, "bold")).pack(side="left")
 
-        geometry = ttk.LabelFrame(self.frame, text=" Corpo de prova ", padding=8)
+        geometry = ttk.LabelFrame(self.page, text=" Corpo de prova ", padding=8)
         geometry.pack(fill="x", pady=(0, 10))
         ttk.Label(geometry, text="Formato:").pack(side="left", padx=(0, 6))
         shape = ttk.Combobox(geometry, textvariable=self.shape_var, values=("Círculo", "Quadrado"), state="readonly", width=12)
@@ -39,16 +51,16 @@ class SpatialMap:
         self.geometry_info = ttk.Label(geometry, text="Centro: X = 0 / Y = 0")
         self.geometry_info.pack(side="left", padx=14)
 
-        body = ttk.Frame(self.frame)
+        body = ttk.Frame(self.page)
         body.pack(fill="both", expand=True)
 
         self.canvas = tk.Canvas(body, width=self.canvas_size, height=self.canvas_size, highlightthickness=1, relief="flat")
-        self.canvas.pack(side="left", fill="both", expand=True, padx=(0, 18))
+        self.canvas.pack(side="left", fill="both", expand=True, padx=(0, 14))
         self.canvas.bind("<Button-1>", self._on_left_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<Configure>", lambda _event: self._draw())
 
-        side = ttk.LabelFrame(body, text=" Pontos ", padding=10)
+        side = ttk.LabelFrame(body, text=" Pontos ", padding=8)
         side.pack(side="right", fill="y")
         self.count_var = tk.StringVar(value="0 pontos")
         ttk.Label(side, textvariable=self.count_var, font=("Segoe UI", 12, "bold")).pack(pady=(0, 8))
@@ -72,6 +84,20 @@ class SpatialMap:
         ttk.Label(side, text="Clique esquerdo: adicionar / selecionar\nClique direito: apagar selecionado", font=("Segoe UI", 9)).pack(pady=(8, 0))
 
         self._geometry_changed()
+
+    def _resize_page(self, event):
+        # A página acompanha a largura disponível, mas sua altura continua
+        # livre para permitir rolagem vertical.
+        self.page_canvas.itemconfigure(self.page_window, width=event.width)
+
+    def _scroll_page(self, event):
+        try:
+            widget = event.widget
+            if widget == self.points_canvas or str(widget).startswith(str(self.points_canvas)):
+                return
+            self.page_canvas.yview_scroll(int(-event.delta / 120), "units")
+        except tk.TclError:
+            pass
 
     @property
     def size_mm(self) -> float:
