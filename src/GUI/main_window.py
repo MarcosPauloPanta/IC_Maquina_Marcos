@@ -11,6 +11,7 @@ from src.controller.arduino import ArduinoController
 from src.controller.axis import Axis
 from src.controller.machine import Machine
 from src.controller.point_sequence import PointSequence
+from src.GUI.spatial_map import SpatialMap
 
 CONFIG_FILE = Path("calibration.json")
 
@@ -80,14 +81,17 @@ class MainWindow:
         an = ttk.Frame(nb, padding=18)
         te = ttk.Frame(nb, padding=18)
         ca = ttk.Frame(nb, padding=18)
+        mp = ttk.Frame(nb, padding=0)
         nb.add(op, text="Operação")
         nb.add(an, text="Análise")
         nb.add(te, text="Terminal")
         nb.add(ca, text="Calibração")
+        nb.add(mp, text="Mapa Espacial")
         self._operation(op)
         self._analysis(an)
         self._terminal(te)
         self._calibration(ca)
+        self.spatial_map = SpatialMap(mp, self._colors)
 
         self.footer = tk.Frame(self.root)
         self.footer.pack(fill="x", padx=20, pady=8)
@@ -396,8 +400,8 @@ class MainWindow:
             return
         self._send_jog_stop()
         self.jog_axis = axis
-        self.jog_direction = direction
-        self.arduino.jog_start(axis, direction, speed)
+        self.jog_direction = -direction if axis == "X" else direction
+        self.arduino.jog_start(axis, self.jog_direction, speed)
         self._schedule_jog_refresh()
 
     def _schedule_jog_refresh(self):
@@ -472,6 +476,8 @@ class MainWindow:
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode
         self._apply_theme()
+        if hasattr(self, "spatial_map"):
+            self.spatial_map.refresh_theme()
 
     def _apply_theme(self):
         c = self._colors()
