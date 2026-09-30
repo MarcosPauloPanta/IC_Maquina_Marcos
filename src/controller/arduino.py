@@ -167,21 +167,27 @@ class ArduinoController:
             raise RuntimeError(result)
 
     def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> None:
+        """Na análise, este comando representa a descida física do Z.
+
+        A máquina atualmente tem a direção física de Z invertida em relação
+        aos nomes dos comandos do firmware. Por isso a descida usa Z_RETRACT.
+        """
         if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
-        self._clear_rx_queue()
-        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
-        result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
-        if not result.startswith("Z_APPROACH_READY"):
-            raise RuntimeError(result)
-
-    def z_retract(self, steps: int, speed_steps_s: int) -> None:
-        if steps <= 0 or speed_steps_s <= 0:
-            raise ValueError("Passos e velocidade devem ser positivos.")
         self._clear_rx_queue()
         self.send_nowait(f"Z_RETRACT {int(steps)} {int(speed_steps_s)}")
         result = self.wait_for_motion()
         if result.startswith("LIMIT"):
+            raise RuntimeError(result)
+
+    def z_retract(self, steps: int, speed_steps_s: int) -> None:
+        """Na análise, este comando representa a subida física do Z."""
+        if steps <= 0 or speed_steps_s <= 0:
+            raise ValueError("Parâmetros do Z inválidos.")
+        self._clear_rx_queue()
+        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(steps)}")
+        result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
+        if not result.startswith("Z_APPROACH_READY"):
             raise RuntimeError(result)
 
     def request_position(self) -> None:
