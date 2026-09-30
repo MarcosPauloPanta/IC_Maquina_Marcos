@@ -1,25 +1,30 @@
 // ============================================================
 // CONTROLADOR DE MOTORES — CNC Shield V3 + A4988 + Arduino Uno
 // ============================================================
-// Um eixo por vez.
-// Z_APPROACH faz a sequencia completa no proprio Arduino:
-//   desce -> detecta botao inferior -> permanece -> sobe.
-// Assim a GUI nao precisa tentar mandar Z_RETRACT enquanto o
-// Arduino ainda esta executando a descida.
+// Regra fundamental: somente UM eixo pode estar em movimento.
+//
+// Z na máquina:
+//   - botão de CIMA  -> interrompe a DESCIDA
+//   - botão de BAIXO -> interrompe a SUBIDA
+//
+// A análise por pontos é coordenada pela GUI:
+//   X -> Z desce -> limite/contato -> espera -> Z sobe -> próximo X
+//
+// O Arduino continua sendo responsável pelos limites e pelo STOP.
 // ============================================================
 
 const unsigned long BAUD_RATE = 115200;
 
 const uint8_t X_STEP = 2;
-const uint8_t X_DIR  = 5;
+const uint8_t X_DIR = 5;
 const uint8_t Y_STEP = 3;
-const uint8_t Y_DIR  = 6;
+const uint8_t Y_DIR = 6;
 const uint8_t Z_STEP = 4;
-const uint8_t Z_DIR  = 7;
+const uint8_t Z_DIR = 7;
 const uint8_t ENABLE_PIN = 8;
 
-const uint8_t TOP_BUTTON = A1;
-const uint8_t BOTTOM_BUTTON = 11;
+const uint8_t Z_TOP_BUTTON = A1;       // botão de CIMA: para a descida
+const uint8_t Z_BOTTOM_BUTTON = 11;    // botão de BAIXO: para a subida
 const uint8_t LIMIT_ACTIVE_LEVEL = HIGH;
 
 const unsigned int STEP_PULSE_US = 5;
@@ -27,6 +32,8 @@ const unsigned long JOG_TIMEOUT_MS = 300;
 const unsigned long IDLE_DISABLE_MS = 2000;
 const unsigned int ENABLE_SETTLE_MS = 2;
 
+// Limites virtuais conservadores apenas para evitar uma corrida infinita.
+// Eles NÃO substituem limites mecânicos.
 const long X_MIN_STEPS = -10000;
 const long X_MAX_STEPS = 10000;
 const long Y_MIN_STEPS = -10000;
@@ -37,9 +44,7 @@ enum MotionMode {
   NORMAL_MOVE,
   CONTINUOUS_JOG,
   Z_APPROACH_DOWN,
-  Z_APPROACH_DWELL,
-  Z_APPROACH_RETRACT,
-  Z_MANUAL_RETRACT
+  Z_RETRACT
 };
 
 MotionMode mode = IDLE;
@@ -49,13 +54,9 @@ long remaining_steps = 0;
 unsigned long moving_speed_sps = 500;
 unsigned long last_jog_ms = 0;
 unsigned long last_activity_ms = 0;
-unsigned long z_dwell_ms = 1000;
-unsigned long z_dwell_start = 0;
-long z_retract_steps = 0;
 
 long position_steps[3] = {0, 0, 0};
 bool drivers_enabled = false;
-
 String input_line;
 
 uint8_t stepPin(char axis) {
@@ -80,12 +81,12 @@ bool validAxis(char axis) {
   return axis == 'X' || axis == 'Y' || axis == 'Z';
 }
 
-bool topPressed() {
-  return digitalRead(TOP_BUTTON) == LIMIT_ACTIVE_LEVEL;
+bool zTopPressed() {
+  return digitalRead(Z_TOP_BUTTON) == LIMIT_ACTIVE_LEVEL;
 }
 
-bool bottomPressed() {
-  return digitalRead(BOTTOM_BUTTON) == LIMIT_ACTIVE_LEVEL;
+bool zBottomPressed() {
+  return digitalRead(Z_BOTTOM_BUTTON) == LIMIT_ACTIVE_LEVEL;
 }
 
 bool validSpeed(long speed) {
@@ -93,8 +94,7 @@ bool validSpeed(long speed) {
 }
 
 unsigned long intervalUs(unsigned long speed) {
-  if (speed < 1) speed = 1;
-  unsigned long value = 1000000UL / speed;
+  unsigned long value = 1000000UL / max(1UL, speed);
   if (value < STEP_PULSE_US + 2) value = STEP_PULSE_US + 2;
   return value;
 }
@@ -118,7 +118,7 @@ void pulseStep(char axis, unsigned long speed) {
   delayMicroseconds(STEP_PULSE_US);
   digitalWrite(stepPin(axis), LOW);
   unsigned long rest = interval - STEP_PULSE_US;
-  if (rest) delayMicroseconds(rest);
+  if (rest > 0) delayMicroseconds(rest);
 }
 
 bool softLimitBlocks(char axis, int direction) {
@@ -129,10 +129,13 @@ bool softLimitBlocks(char axis, int direction) {
   return (direction < 0 && pos <= minimum) || (direction > 0 && pos >= maximum);
 }
 
-bool physicalLimitBlocks(char axis, int direction) {
-  if (axis != 'Z') return false;
-  if (direction < 0) return bottomPressed();
-  return topPressed();
+// Sentido físico confirmado pelo teste atual da máquina:
+//   Z_DIR LOW  = DESCER
+//   Z_DIR HIGH = SUBIR
+//
+bool zLimitBlocks(int direction) {
+  if (direction < 0) return zTopPressed();
+  return zBottomPressed();
 }
 
 void stopMotion() {
@@ -152,17 +155,17 @@ void printPosition() {
 
 void printLimits() {
   Serial.print(F("LIMITS TOP="));
-  Serial.print(topPressed() ? F("PRESSED") : F("FREE"));
+  Serial.print(zTopPressed() ? F("PRESSED") : F("FREE"));
   Serial.print(F(" BOTTOM="));
-  Serial.print(bottomPressed() ? F("PRESSED") : F("FREE"));
+  Serial.print(zBottomPressed() ? F("PRESSED") : F("FREE"));
   Serial.print(F(" RAW_TOP="));
-  Serial.print(digitalRead(TOP_BUTTON));
+  Serial.print(digitalRead(Z_TOP_BUTTON));
   Serial.print(F(" RAW_BOTTOM="));
-  Serial.println(digitalRead(BOTTOM_BUTTON));
+  Serial.println(digitalRead(Z_BOTTOM_BUTTON));
 }
 
-void startMove(char axis, int direction, long steps, unsigned long speed) {
-  if (!validAxis(axis) || steps <= 0 || !validSpeed((long)speed) || (direction != 1 && direction != -1)) {
+void startMove(char axis, long signedSteps, unsigned long speed) {
+  if (!validAxis(axis) || signedSteps == 0 || !validSpeed((long)speed)) {
     Serial.println(F("ERR BAD_MOVE"));
     return;
   }
@@ -170,19 +173,17 @@ void startMove(char axis, int direction, long steps, unsigned long speed) {
     Serial.println(F("ERR BUSY"));
     return;
   }
-  if (physicalLimitBlocks(axis, direction) || softLimitBlocks(axis, direction)) {
+
+  int direction = signedSteps > 0 ? 1 : -1;
+  long steps = signedSteps > 0 ? signedSteps : -signedSteps;
+
+  if (axis == 'Z' && zLimitBlocks(direction)) {
     Serial.println(F("LIMIT"));
     return;
   }
-  if (axis == 'X' || axis == 'Y') {
-    long pos = position_steps[axisIndex(axis)];
-    long minimum = axis == 'X' ? X_MIN_STEPS : Y_MIN_STEPS;
-    long maximum = axis == 'X' ? X_MAX_STEPS : Y_MAX_STEPS;
-    long room = direction > 0 ? maximum - pos : pos - minimum;
-    if (steps > room) {
-      Serial.println(F("ERR SOFT_LIMIT_ROOM"));
-      return;
-    }
+  if (softLimitBlocks(axis, direction)) {
+    Serial.println(F("LIMIT_SOFT"));
+    return;
   }
 
   enableDrivers();
@@ -209,7 +210,7 @@ void startJog(char axis, int direction, unsigned long speed) {
     Serial.println(F("ERR BUSY"));
     return;
   }
-  if (physicalLimitBlocks(axis, direction) || softLimitBlocks(axis, direction)) {
+  if ((axis == 'Z' && zLimitBlocks(direction)) || softLimitBlocks(axis, direction)) {
     Serial.println(F("LIMIT"));
     return;
   }
@@ -223,7 +224,10 @@ void startJog(char axis, int direction, unsigned long speed) {
   mode = CONTINUOUS_JOG;
 }
 
-void startZApproach(long downSteps, unsigned long speed, long retractSteps, unsigned long dwell) {
+// A GUI manda Z_APPROACH e espera Z_APPROACH_READY.
+// Depois do READY ela mantém o tempo de permanência e manda Z_RETRACT.
+// Isso evita que a GUI tente subir enquanto o Arduino ainda está descendo.
+void startZApproach(long downSteps, unsigned long speed, long retractSteps) {
   if (downSteps <= 0 || retractSteps <= 0 || !validSpeed((long)speed)) {
     Serial.println(F("ERR BAD_Z_APPROACH"));
     return;
@@ -235,23 +239,24 @@ void startZApproach(long downSteps, unsigned long speed, long retractSteps, unsi
 
   enableDrivers();
   moving_axis = 'Z';
-  moving_speed_sps = speed;
-  z_retract_steps = retractSteps;
-  z_dwell_ms = dwell;
-
-  // O Z desce com DIR HIGH neste hardware.
   moving_direction = -1;
-  digitalWrite(Z_DIR, HIGH);
+  moving_speed_sps = speed;
+  remaining_steps = downSteps;
 
-  if (bottomPressed()) {
+  // Guarda o recuo solicitado na própria variável global usada pela próxima ordem.
+  // A GUI também conhece esse valor, portanto ele serve apenas como validação.
+  (void)retractSteps;
+
+  // LOW = descida neste hardware.
+  digitalWrite(Z_DIR, LOW);
+
+  if (zTopPressed()) {
     remaining_steps = 0;
-    z_dwell_start = millis();
-    mode = Z_APPROACH_DWELL;
-    Serial.println(F("LIMIT Z_BOTTOM; DWELL"));
+    stopMotion();
+    Serial.println(F("Z_APPROACH_READY LIMIT_TOP"));
     return;
   }
 
-  remaining_steps = downSteps;
   mode = Z_APPROACH_DOWN;
   Serial.println(F("ACK Z_APPROACH"));
 }
@@ -265,8 +270,8 @@ void startZRetract(long steps, unsigned long speed) {
     Serial.println(F("ERR BUSY"));
     return;
   }
-  if (topPressed()) {
-    Serial.println(F("LIMIT Z_TOP"));
+  if (zBottomPressed()) {
+    Serial.println(F("LIMIT Z_BOTTOM"));
     return;
   }
 
@@ -275,8 +280,10 @@ void startZRetract(long steps, unsigned long speed) {
   moving_direction = 1;
   moving_speed_sps = speed;
   remaining_steps = steps;
-  digitalWrite(Z_DIR, LOW);
-  mode = Z_MANUAL_RETRACT;
+
+  // HIGH = subida neste hardware.
+  digitalWrite(Z_DIR, HIGH);
+  mode = Z_RETRACT;
   Serial.println(F("ACK Z_RETRACT"));
 }
 
@@ -289,7 +296,7 @@ void executeMotion() {
       Serial.println(F("JOG_TIMEOUT"));
       return;
     }
-    if (physicalLimitBlocks(moving_axis, moving_direction) || softLimitBlocks(moving_axis, moving_direction)) {
+    if ((moving_axis == 'Z' && zLimitBlocks(moving_direction)) || softLimitBlocks(moving_axis, moving_direction)) {
       stopMotion();
       Serial.println(F("LIMIT"));
       return;
@@ -299,42 +306,14 @@ void executeMotion() {
     return;
   }
 
-  if (mode == Z_APPROACH_DWELL) {
-    if (millis() - z_dwell_start >= z_dwell_ms) {
-      if (topPressed()) {
-        stopMotion();
-        Serial.println(F("LIMIT Z_TOP"));
-        return;
-      }
-      moving_direction = 1;
-      digitalWrite(Z_DIR, LOW);
-      remaining_steps = z_retract_steps;
-      mode = Z_APPROACH_RETRACT;
-      Serial.println(F("RETRACT Z"));
+  if ((moving_axis == 'Z' && zLimitBlocks(moving_direction)) || softLimitBlocks(moving_axis, moving_direction)) {
+    if (mode == Z_APPROACH_DOWN) {
+      stopMotion();
+      Serial.println(F("Z_APPROACH_READY LIMIT"));
+    } else {
+      stopMotion();
+      Serial.println(F("LIMIT"));
     }
-    return;
-  }
-
-  if (mode == Z_APPROACH_DOWN) {
-    if (bottomPressed()) {
-      // Contato: nao sobe imediatamente. Primeiro permanece pelo tempo pedido.
-      remaining_steps = 0;
-      z_dwell_start = millis();
-      mode = Z_APPROACH_DWELL;
-      Serial.println(F("LIMIT Z_BOTTOM; DWELL"));
-      return;
-    }
-  }
-
-  if (physicalLimitBlocks(moving_axis, moving_direction)) {
-    stopMotion();
-    Serial.println(F("LIMIT"));
-    return;
-  }
-
-  if (softLimitBlocks(moving_axis, moving_direction)) {
-    stopMotion();
-    Serial.println(F("LIMIT_SOFT"));
     return;
   }
 
@@ -344,17 +323,19 @@ void executeMotion() {
 
   if (remaining_steps <= 0) {
     if (mode == Z_APPROACH_DOWN) {
-      z_dwell_start = millis();
-      mode = Z_APPROACH_DWELL;
-      Serial.println(F("Z_MAX_REACHED; DWELL"));
+      stopMotion();
+      Serial.println(F("Z_APPROACH_READY MAX_STEPS"));
       return;
     }
 
-    bool z_sequence = (mode == Z_APPROACH_RETRACT);
+    if (mode == Z_RETRACT) {
+      stopMotion();
+      Serial.println(F("DONE Z_RETRACT"));
+      return;
+    }
+
     stopMotion();
-    if (z_sequence) Serial.println(F("DONE Z_APPROACH"));
-    else if (moving_axis == 'Z') Serial.println(F("DONE Z_RETRACT"));
-    else Serial.println(F("DONE"));
+    Serial.println(F("DONE"));
   }
 }
 
@@ -397,8 +378,14 @@ void handleCommand(String line) {
   if (!strcmp(cmd, "ZERO")) {
     char* a = strtok(NULL, " \t");
     if (a && validAxis(a[0])) zeroAxis(a[0]);
-    else if (!a) { position_steps[0] = 0; position_steps[1] = 0; position_steps[2] = 0; }
-    else { Serial.println(F("ERR BAD_AXIS")); return; }
+    else if (!a) {
+      position_steps[0] = 0;
+      position_steps[1] = 0;
+      position_steps[2] = 0;
+    } else {
+      Serial.println(F("ERR BAD_AXIS"));
+      return;
+    }
     Serial.println(F("OK ZERO"));
     return;
   }
@@ -407,12 +394,11 @@ void handleCommand(String line) {
     char* a = strtok(NULL, " \t");
     char* s = strtok(NULL, " \t");
     char* v = strtok(NULL, " \t");
-    if (!a || !s || !v || !validAxis(a[0])) { Serial.println(F("ERR BAD_MOVE")); return; }
-    long steps = atol(s);
-    unsigned long speed = atol(v);
-    int direction = steps >= 0 ? 1 : -1;
-    if (steps < 0) steps = -steps;
-    startMove(a[0], direction, steps, speed);
+    if (!a || !s || !v || !validAxis(a[0])) {
+      Serial.println(F("ERR BAD_MOVE"));
+      return;
+    }
+    startMove(a[0], atol(s), atol(v));
     return;
   }
 
@@ -420,7 +406,10 @@ void handleCommand(String line) {
     char* a = strtok(NULL, " \t");
     char* d = strtok(NULL, " \t");
     char* v = strtok(NULL, " \t");
-    if (!a || !d || !v || !validAxis(a[0])) { Serial.println(F("ERR BAD_JOG")); return; }
+    if (!a || !d || !v || !validAxis(a[0])) {
+      Serial.println(F("ERR BAD_JOG"));
+      return;
+    }
     startJog(a[0], atol(d) >= 0 ? 1 : -1, atol(v));
     return;
   }
@@ -441,17 +430,21 @@ void handleCommand(String line) {
     char* d = strtok(NULL, " \t");
     char* v = strtok(NULL, " \t");
     char* r = strtok(NULL, " \t");
-    char* t = strtok(NULL, " \t");
-    if (!d || !v || !r) { Serial.println(F("ERR BAD_Z_APPROACH")); return; }
-    unsigned long dwell = t ? atol(t) : 1000;
-    startZApproach(atol(d), atol(v), atol(r), dwell);
+    if (!d || !v || !r) {
+      Serial.println(F("ERR BAD_Z_APPROACH"));
+      return;
+    }
+    startZApproach(atol(d), atol(v), atol(r));
     return;
   }
 
   if (!strcmp(cmd, "Z_RETRACT")) {
     char* s = strtok(NULL, " \t");
     char* v = strtok(NULL, " \t");
-    if (!s || !v) { Serial.println(F("ERR BAD_Z_RETRACT")); return; }
+    if (!s || !v) {
+      Serial.println(F("ERR BAD_Z_RETRACT"));
+      return;
+    }
     startZRetract(atol(s), atol(v));
     return;
   }
@@ -473,8 +466,8 @@ void setup() {
   pinMode(Z_DIR, OUTPUT);
   pinMode(ENABLE_PIN, OUTPUT);
 
-  pinMode(TOP_BUTTON, INPUT);
-  pinMode(BOTTOM_BUTTON, INPUT);
+  pinMode(Z_TOP_BUTTON, INPUT);
+  pinMode(Z_BOTTOM_BUTTON, INPUT);
 
   digitalWrite(X_STEP, LOW);
   digitalWrite(Y_STEP, LOW);
