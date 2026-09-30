@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -14,14 +15,21 @@ CONFIG_FILE = Path("calibration.json")
 
 
 class MainWindow:
-    LIGHT = {"bg": "#F3F3F1", "panel": "#FFFFFF", "field": "#E8E8E5", "text": "#202020", "accent": "#7A4A24", "border": "#B5B5AF", "danger": "#A51D2D"}
-    DARK = {"bg": "#17191B", "panel": "#24272A", "field": "#303438", "text": "#F3F3F1", "accent": "#D13A46", "border": "#555A60", "danger": "#E04450"}
+    LIGHT = {
+        "bg": "#F3F3F1", "panel": "#FFFFFF", "field": "#E8E8E5",
+        "text": "#202020", "accent": "#7A4A24", "border": "#B5B5AF", "danger": "#A51D2D"
+    }
+    DARK = {
+        "bg": "#17191B", "panel": "#202224", "field": "#292B2E",
+        "text": "#F2F2F0", "accent": "#D13A46", "border": "#3D4145", "danger": "#E04450"
+    }
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Máquina de Análise")
         self.root.geometry("1050x780")
         self.root.minsize(920, 680)
+
         self.arduino: ArduinoController | None = None
         self.machine = Machine(
             x=Axis(200, 16, 8, calibrated_steps_per_mm=400.0),
@@ -34,6 +42,7 @@ class MainWindow:
         self.jog_direction = 0
         self.jog_refresh_id: str | None = None
         self.point_entries: list[tk.Entry] = []
+
         self.port_var = tk.StringVar(value="COM3")
         self.status_var = tk.StringVar(value="Desconectado")
         self.log_var = tk.StringVar(value="Pronto.")
@@ -45,6 +54,8 @@ class MainWindow:
         self.z_down_mm_var = tk.StringVar(value="1.000")
         self.z_speed_var = tk.StringVar(value="200")
         self.z_retract_mm_var = tk.StringVar(value="1.000")
+        self.z_dwell_s_var = tk.StringVar(value="1.000")
+
         self.style = ttk.Style(root)
         self.style.theme_use("clam")
         self._load_calibration()
@@ -126,17 +137,21 @@ class MainWindow:
     def _build_analysis(self, parent) -> None:
         ttk.Label(parent, text="Análise por pontos", font=("Segoe UI", 16, "bold")).pack(anchor="w")
         ttk.Label(parent, text="Informe a quantidade de pontos e a posição X de cada ponto.").pack(anchor="w", pady=(3, 14))
+
         setup = ttk.LabelFrame(parent, text=" Pontos ")
         setup.pack(fill="x")
         ttk.Label(setup, text="Quantidade:").pack(side="left", padx=(12, 5), pady=12)
         ttk.Spinbox(setup, from_=1, to=100, width=7, textvariable=self.point_count_var).pack(side="left")
         ttk.Button(setup, text="Criar", command=self.create_point_fields).pack(side="left", padx=10)
         ttk.Button(setup, text="Limpar", command=self.clear_points).pack(side="left")
+
         table = ttk.LabelFrame(parent, text=" Posições X ")
         table.pack(fill="both", expand=True, pady=12)
         self.point_table = table
         ttk.Label(table, text="Ponto", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, padx=45, pady=8)
         ttk.Label(table, text="X (mm)", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, padx=45, pady=8)
+        for col in (0, 1): table.columnconfigure(col, weight=1)
+
         action = ttk.Frame(parent)
         action.pack(fill="x")
         ttk.Label(action, textvariable=self.sequence_status_var).pack(side="left")
@@ -181,28 +196,43 @@ class MainWindow:
         except ValueError:
             messagebox.showerror("Pontos", "Todos os campos X precisam conter números.")
             return
+
         self.sequence.set_points(positions)
         if self.arduino is None or not self.arduino.is_connected:
             messagebox.showwarning("Análise", "Conecte o Arduino antes de executar.")
             return
         if not self._apply_z_values(show_error=True):
             return
+
+        self.execute_button.configure(state="disabled")
         try:
-            # Y permanece parado. Cada deslocamento de X é enviado separadamente.
             current_x = self.machine.x.current_position_mm
-            for target_x in positions:
+            z_steps = round(float(self.z_down_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
+            retract_steps = round(float(self.z_retract_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
+            z_speed = int(self.z_speed_var.get())
+            dwell_s = float(self.z_dwell_s_var.get().replace(",", "."))
+
+            for index, target_x in enumerate(positions, start=1):
+                # 1. X vai ao ponto. Y nunca é comandado nesta sequência.
                 delta_mm = target_x - current_x
                 steps = round(delta_mm * self.machine.x.microsteps_per_mm)
                 if steps:
-                    speed = min(500, max(1, abs(steps)))
-                    self.arduino.move_steps("X", steps, speed)
+                    x_speed = min(500, max(1, abs(steps)))
+                    self.arduino.move_steps("X", steps, x_speed)
                     current_x = target_x
-                # A descida do Z usa o limite configurado e o Arduino decide o contato.
-                z_steps = round(float(self.z_down_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
-                retract_steps = round(float(self.z_retract_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
-                z_speed = int(self.z_speed_var.get())
+
+                # 2. Z desce até o contato/limite definido pelo firmware.
                 self.arduino.z_approach(z_steps, z_speed, retract_steps)
+
+                # 3. Mantém o conjunto no ponto durante o tempo definido.
+                # O comando de subida fica depois deste intervalo no buffer serial.
+                time.sleep(dwell_s)
+
+                # 4. Z sobe antes de liberar o próximo ponto X.
                 self.arduino.z_retract(retract_steps, z_speed)
+                self.log_var.set(f"Ponto {index}/{len(positions)}")
+                self.root.update_idletasks()
+
             self.machine.x.current_position_mm = current_x
             self.refresh_positions()
             self.sequence_status_var.set(f"{len(positions)} pontos executados.")
@@ -210,6 +240,8 @@ class MainWindow:
         except Exception as exc:
             self.stop()
             messagebox.showerror("Análise", str(exc))
+        finally:
+            self.execute_button.configure(state="normal")
 
     def _build_calibration(self, parent) -> None:
         ttk.Label(parent, text="Calibração", font=("Segoe UI", 16, "bold")).pack(anchor="w")
@@ -221,16 +253,19 @@ class MainWindow:
         for row, axis in enumerate("XYZ", start=1):
             ttk.Label(axes, text=axis, font=("Segoe UI", 10, "bold")).grid(row=row, column=0, pady=6)
             ttk.Entry(axes, textvariable=self.calibration_vars[axis], width=18).grid(row=row, column=1, pady=6)
+
         zbox = ttk.LabelFrame(parent, text=" Parâmetros do Z ")
         zbox.pack(fill="x", pady=4)
         fields = [
             ("Descida máxima (mm)", self.z_down_mm_var),
             ("Velocidade de descida (passos/s)", self.z_speed_var),
             ("Recuo após contato (mm)", self.z_retract_mm_var),
+            ("Tempo de permanência embaixo (s)", self.z_dwell_s_var),
         ]
         for row, (label, variable) in enumerate(fields):
             ttk.Label(zbox, text=label).grid(row=row, column=0, padx=12, pady=8, sticky="w")
             ttk.Entry(zbox, textvariable=variable, width=18).grid(row=row, column=1, padx=12, pady=8, sticky="w")
+
         buttons = ttk.Frame(parent)
         buttons.pack(fill="x", pady=12)
         ttk.Button(buttons, text="Aplicar", command=self.apply_calibration).pack(side="left")
@@ -242,12 +277,13 @@ class MainWindow:
             down = float(self.z_down_mm_var.get().replace(",", "."))
             speed = int(self.z_speed_var.get())
             retract = float(self.z_retract_mm_var.get().replace(",", "."))
-            if down <= 0 or speed <= 0 or retract <= 0:
+            dwell = float(self.z_dwell_s_var.get().replace(",", "."))
+            if down <= 0 or speed <= 0 or retract <= 0 or dwell < 0:
                 raise ValueError
             return True
         except ValueError:
             if show_error:
-                messagebox.showerror("Calibração", "Os parâmetros do Z devem ser positivos.")
+                messagebox.showerror("Calibração", "Verifique os parâmetros do Z e o tempo de permanência.")
             return False
 
     def apply_calibration(self) -> bool:
@@ -265,7 +301,15 @@ class MainWindow:
     def save_calibration(self) -> None:
         if not self.apply_calibration():
             return
-        data = {"axes_steps_per_mm": {a: self.machine.get_axis(a).microsteps_per_mm for a in "XYZ"}, "z_approach": {"down_mm": float(self.z_down_mm_var.get().replace(",", ".")), "speed_steps_s": int(self.z_speed_var.get()), "retract_mm": float(self.z_retract_mm_var.get().replace(",", "."))}}
+        data = {
+            "axes_steps_per_mm": {a: self.machine.get_axis(a).microsteps_per_mm for a in "XYZ"},
+            "z_approach": {
+                "down_mm": float(self.z_down_mm_var.get().replace(",", ".")),
+                "speed_steps_s": int(self.z_speed_var.get()),
+                "retract_mm": float(self.z_retract_mm_var.get().replace(",", ".")),
+                "dwell_s": float(self.z_dwell_s_var.get().replace(",", ".")),
+            },
+        }
         CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         self.log_var.set("Calibração salva.")
 
@@ -286,6 +330,7 @@ class MainWindow:
             if "down_mm" in z: self.z_down_mm_var.set(str(z["down_mm"]))
             if "speed_steps_s" in z: self.z_speed_var.set(str(z["speed_steps_s"]))
             if "retract_mm" in z: self.z_retract_mm_var.set(str(z["retract_mm"]))
+            if "dwell_s" in z: self.z_dwell_s_var.set(str(z["dwell_s"]))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
 
@@ -451,16 +496,19 @@ class MainWindow:
         self.terminal_prompt.configure(bg=c["panel"], fg=c["accent"])
         self.terminal_history.configure(bg=c["field"], fg=c["text"], insertbackground=c["text"])
         self.terminal_command.configure(bg=c["field"], fg=c["text"], insertbackground=c["text"])
+
         self.style.configure(".", background=c["panel"], foreground=c["text"], fieldbackground=c["field"])
-        self.style.configure("TFrame", background=c["panel"])
+        self.style.configure("TFrame", background=c["panel"], foreground=c["text"])
         self.style.configure("TLabel", background=c["panel"], foreground=c["text"])
         self.style.configure("TLabelframe", background=c["panel"], foreground=c["text"], bordercolor=c["border"])
-        self.style.configure("TLabelframe.Label", background=c["panel"], foreground=c["accent"])
-        self.style.configure("TButton", background=c["panel"], foreground=c["text"])
+        self.style.configure("TLabelframe.Label", background=c["panel"], foreground=c["text"])
+        self.style.configure("TButton", background=c["panel"], foreground=c["text"], bordercolor=c["border"])
+        self.style.map("TButton", background=[("active", c["field"]), ("pressed", c["field"])], foreground=[("disabled", c["border"])])
         self.style.configure("TEntry", fieldbackground=c["field"], foreground=c["text"])
         self.style.configure("TSpinbox", fieldbackground=c["field"], foreground=c["text"])
-        self.style.configure("TNotebook", background=c["bg"])
-        self.style.configure("TNotebook.Tab", background=c["panel"], foreground=c["text"], padding=(15, 7))
+        self.style.configure("TNotebook", background=c["bg"], bordercolor=c["bg"])
+        self.style.configure("TNotebook.Tab", background=c["panel"], foreground=c["text"], padding=(15, 7), bordercolor=c["panel"])
+        self.style.map("TNotebook.Tab", background=[("selected", c["panel"]), ("active", c["panel"])], foreground=[("selected", c["text"])])
 
     def close(self) -> None:
         self._send_jog_stop()
