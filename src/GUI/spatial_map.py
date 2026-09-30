@@ -17,8 +17,10 @@ class SpatialMap:
         self.selected_index: int | None = None
         self.shape_var = tk.StringVar(value="Círculo")
         self.size_var = tk.StringVar(value=f"{self.DEFAULT_SIZE_MM:.2f}")
+        self.zoom_var = tk.DoubleVar(value=1.0)
         self.canvas_size = 390
         self.margin = 38
+        self.base_sample_px = 310
 
         self.outer = ttk.Frame(parent)
         self.outer.pack(fill="both", expand=True)
@@ -49,11 +51,38 @@ class SpatialMap:
         self.geometry_info = ttk.Label(geometry, text="Centro: X = 0 / Y = 0")
         self.geometry_info.pack(side="left", padx=8)
 
+        zoom_frame = ttk.LabelFrame(self.page, text=" Escala do mapa ", padding=5)
+        zoom_frame.pack(fill="x", pady=(0, 7))
+        ttk.Label(zoom_frame, text="Pequeno").pack(side="left")
+        self.zoom_scale = ttk.Scale(
+            zoom_frame,
+            from_=0.75,
+            to=8.0,
+            variable=self.zoom_var,
+            command=self._zoom_changed,
+        )
+        self.zoom_scale.pack(side="left", fill="x", expand=True, padx=8)
+        self.zoom_value_label = ttk.Label(zoom_frame, text="1.00×", width=7, anchor="center")
+        self.zoom_value_label.pack(side="left")
+        ttk.Label(zoom_frame, text="Grande").pack(side="left", padx=(4, 0))
+
         body = ttk.Frame(self.page)
         body.pack(fill="both", expand=True)
 
-        self.canvas = tk.Canvas(body, width=self.canvas_size, height=self.canvas_size, highlightthickness=1, relief="flat")
-        self.canvas.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        # O mapa possui sua própria área rolável. O usuário pode aumentar a
+        # escala sem perder pontos: barras horizontal e vertical permitem
+        # navegar pelo mapa como uma página grande.
+        map_frame = ttk.Frame(body)
+        map_frame.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        self.canvas = tk.Canvas(map_frame, width=self.canvas_size, height=self.canvas_size, highlightthickness=1, relief="flat")
+        self.map_xscroll = ttk.Scrollbar(map_frame, orient="horizontal", command=self.canvas.xview)
+        self.map_yscroll = ttk.Scrollbar(map_frame, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=self.map_xscroll.set, yscrollcommand=self.map_yscroll.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.map_yscroll.grid(row=0, column=1, sticky="ns")
+        self.map_xscroll.grid(row=1, column=0, sticky="ew")
+        map_frame.rowconfigure(0, weight=1)
+        map_frame.columnconfigure(0, weight=1)
         self.canvas.bind("<Button-1>", self._on_left_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<Configure>", lambda _event: self._draw())
@@ -91,6 +120,8 @@ class SpatialMap:
             widget = event.widget
             if widget == self.points_canvas or str(widget).startswith(str(self.points_canvas)):
                 return
+            if widget == self.canvas or str(widget).startswith(str(self.canvas)):
+                return
             self.page_canvas.yview_scroll(int(-event.delta / 120), "units")
         except tk.TclError:
             pass
@@ -112,17 +143,25 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
-    def _half_size_mm(self):
-        return self.size_mm / 2.0
+    def _zoom_changed(self, _value=None):
+        zoom = max(0.75, min(8.0, float(self.zoom_var.get())))
+        self.zoom_value_label.configure(text=f"{zoom:.2f}×")
+        self._draw()
+
+    def _content_geometry(self):
+        zoom = max(0.75, min(8.0, float(self.zoom_var.get())))
+        sample_px = self.base_sample_px * zoom
+        viewport_w = max(self.canvas.winfo_width(), 320)
+        viewport_h = max(self.canvas.winfo_height(), 320)
+        content_w = max(viewport_w + 160, sample_px + 2 * self.margin + 160)
+        content_h = max(viewport_h + 160, sample_px + 2 * self.margin + 160)
+        cx, cy = content_w / 2, content_h / 2
+        radius_px = sample_px / 2
+        scale = sample_px / self.size_mm
+        return content_w, content_h, cx, cy, radius_px, scale
 
     def _geometry(self):
-        width = max(self.canvas.winfo_width(), 320)
-        height = max(self.canvas.winfo_height(), 320)
-        cx, cy = width / 2, height / 2
-        half = self._half_size_mm()
-        radius_px = min(width, height) / 2 - self.margin
-        scale = radius_px / half
-        return cx, cy, radius_px, scale
+        return self._content_geometry()[2:]
 
     def _mm_to_px(self, x, y):
         cx, cy, _, scale = self._geometry()
@@ -137,6 +176,9 @@ class SpatialMap:
         if self.shape_var.get() == "Círculo":
             return math.hypot(x, y) <= half
         return abs(x) <= half and abs(y) <= half
+
+    def _half_size_mm(self):
+        return self.size_mm / 2.0
 
     def _point_at(self, px, py):
         for index, point in reversed(list(enumerate(self.points))):
@@ -230,21 +272,23 @@ class SpatialMap:
         if not hasattr(self, "canvas"):
             return
         colors = self.colors_getter()
-        self.canvas.configure(bg=colors["field"], highlightbackground=colors["border"])
+        content_w, content_h, cx, cy, radius_px, _ = self._content_geometry()
+        self.canvas.configure(bg=colors["field"], highlightbackground=colors["border"], scrollregion=(0, 0, content_w, content_h))
         self.canvas.delete("all")
-        cx, cy, radius_px, _ = self._geometry()
         if self.shape_var.get() == "Círculo":
             self.canvas.create_oval(cx - radius_px, cy - radius_px, cx + radius_px, cy + radius_px, fill=colors["panel"], outline=colors["accent"], width=2)
         else:
             self.canvas.create_rectangle(cx - radius_px, cy - radius_px, cx + radius_px, cy + radius_px, fill=colors["panel"], outline=colors["accent"], width=2)
-        self.canvas.create_line(self.margin, cy, self.canvas.winfo_width() - self.margin, cy, fill=colors["border"], width=1)
-        self.canvas.create_line(cx, self.margin, cx, self.canvas.winfo_height() - self.margin, fill=colors["border"], width=1)
-        self.canvas.create_text(self.canvas.winfo_width() - self.margin + 12, cy, text="+X", fill=colors["text"], font=("Segoe UI", 9, "bold"))
-        self.canvas.create_text(cx, self.margin - 10, text="+Y", fill=colors["text"], font=("Segoe UI", 9, "bold"))
+        self.canvas.create_line(cx - radius_px - self.margin, cy, cx + radius_px + self.margin, cy, fill=colors["border"], width=1)
+        self.canvas.create_line(cx, cy - radius_px - self.margin, cx, cy + radius_px + self.margin, fill=colors["border"], width=1)
+        self.canvas.create_text(cx + radius_px + 15, cy, text="+X", fill=colors["text"], font=("Segoe UI", 9, "bold"))
+        self.canvas.create_text(cx, cy - radius_px - 15, text="+Y", fill=colors["text"], font=("Segoe UI", 9, "bold"))
         self.canvas.create_text(cx + 14, cy + 12, text="0,0", fill=colors["text"], font=("Consolas", 8))
         for i, point in enumerate(self.points, 1):
             px, py = self._mm_to_px(point["x"], point["y"])
             selected = self.selected_index == i - 1
+            # O ponto mantém tamanho visual pequeno na tela; quem cresce é a
+            # distância entre os pontos, evitando que pontos próximos se cubram.
             r = 7 if selected else 5
             self.canvas.create_oval(px - r, py - r, px + r, py + r, fill=colors["danger"], outline=colors["text"] if selected else colors["danger"], width=2 if selected else 1)
             self.canvas.create_text(px + 10, py - 10, text=str(i), fill=colors["text"], font=("Segoe UI", 9, "bold"))
