@@ -5,28 +5,28 @@ from dataclasses import dataclass
 
 @dataclass
 class MeasurementPoint:
-    """Um ponto de análise definido pela coordenada X."""
+    """Ponto de análise: somente X varia entre pontos; Y fica fixo."""
 
     x_mm: float
     label: str = ""
 
 
 class PointSequence:
-    """Planeja a sequência X -> descer Z -> tocar limite -> subir.
-
-    A detecção física do botão Z é responsabilidade do firmware. A GUI apenas
-    envia as etapas do protocolo e acompanha o estado da sequência.
-    """
+    """Lista ordenada de pontos X para uma análise sequencial."""
 
     def __init__(self) -> None:
         self.points: list[MeasurementPoint] = []
         self.index = -1
 
     def add(self, x_mm: float, label: str = "") -> None:
-        self.points.append(MeasurementPoint(float(x_mm), label))
+        self.points.append(MeasurementPoint(float(x_mm), label.strip()))
 
     def remove(self, index: int) -> None:
         del self.points[index]
+        if self.points and self.index >= len(self.points):
+            self.index = len(self.points) - 1
+        elif not self.points:
+            self.index = -1
 
     def clear(self) -> None:
         self.points.clear()
@@ -48,4 +48,4 @@ class PointSequence:
 
     @property
     def finished(self) -> bool:
-        return self.index >= len(self.points) and bool(self.points)
+        return bool(self.points) and self.index >= len(self.points)
