@@ -17,16 +17,14 @@ class SpatialMap:
         self.selected_index: int | None = None
         self.shape_var = tk.StringVar(value="Círculo")
         self.size_var = tk.StringVar(value=f"{self.DEFAULT_SIZE_MM:.2f}")
-        self.canvas_size = 500
-        self.margin = 55
+        self.canvas_size = 390
+        self.margin = 38
 
-        # Área rolável, semelhante a uma página web: quando a janela fica
-        # menor que o conteúdo, o usuário pode descer/subir com a barra.
         self.outer = ttk.Frame(parent)
         self.outer.pack(fill="both", expand=True)
         self.page_canvas = tk.Canvas(self.outer, highlightthickness=0, bd=0)
         self.page_scroll = ttk.Scrollbar(self.outer, orient="vertical", command=self.page_canvas.yview)
-        self.page = ttk.Frame(self.page_canvas, padding=14)
+        self.page = ttk.Frame(self.page_canvas, padding=8)
         self.page_window = self.page_canvas.create_window((0, 0), window=self.page, anchor="nw")
         self.page_canvas.configure(yscrollcommand=self.page_scroll.set)
         self.page_canvas.pack(side="left", fill="both", expand=True)
@@ -36,38 +34,38 @@ class SpatialMap:
         self.page_canvas.bind_all("<MouseWheel>", self._scroll_page, add="+")
 
         header = ttk.Frame(self.page)
-        header.pack(fill="x", pady=(0, 8))
-        ttk.Label(header, text="Mapa Espacial", font=("Segoe UI", 18, "bold")).pack(side="left")
+        header.pack(fill="x", pady=(0, 5))
+        ttk.Label(header, text="Mapa Espacial", font=("Segoe UI", 14, "bold")).pack(side="left")
 
-        geometry = ttk.LabelFrame(self.page, text=" Corpo de prova ", padding=8)
-        geometry.pack(fill="x", pady=(0, 10))
-        ttk.Label(geometry, text="Formato:").pack(side="left", padx=(0, 6))
-        shape = ttk.Combobox(geometry, textvariable=self.shape_var, values=("Círculo", "Quadrado"), state="readonly", width=12)
+        geometry = ttk.LabelFrame(self.page, text=" Corpo de prova ", padding=6)
+        geometry.pack(fill="x", pady=(0, 7))
+        ttk.Label(geometry, text="Formato:").pack(side="left", padx=(0, 5))
+        shape = ttk.Combobox(geometry, textvariable=self.shape_var, values=("Círculo", "Quadrado"), state="readonly", width=10)
         shape.pack(side="left")
         shape.bind("<<ComboboxSelected>>", lambda _event: self._geometry_changed())
-        ttk.Label(geometry, text="Diâmetro / lado (mm):").pack(side="left", padx=(18, 6))
-        ttk.Entry(geometry, textvariable=self.size_var, width=12).pack(side="left")
-        ttk.Button(geometry, text="Aplicar", command=self._geometry_changed).pack(side="left", padx=8)
+        ttk.Label(geometry, text="Diâmetro / lado (mm):").pack(side="left", padx=(12, 5))
+        ttk.Entry(geometry, textvariable=self.size_var, width=10).pack(side="left")
+        ttk.Button(geometry, text="Aplicar", command=self._geometry_changed).pack(side="left", padx=6)
         self.geometry_info = ttk.Label(geometry, text="Centro: X = 0 / Y = 0")
-        self.geometry_info.pack(side="left", padx=14)
+        self.geometry_info.pack(side="left", padx=8)
 
         body = ttk.Frame(self.page)
         body.pack(fill="both", expand=True)
 
         self.canvas = tk.Canvas(body, width=self.canvas_size, height=self.canvas_size, highlightthickness=1, relief="flat")
-        self.canvas.pack(side="left", fill="both", expand=True, padx=(0, 14))
+        self.canvas.pack(side="left", fill="both", expand=True, padx=(0, 8))
         self.canvas.bind("<Button-1>", self._on_left_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<Configure>", lambda _event: self._draw())
 
-        side = ttk.LabelFrame(body, text=" Pontos ", padding=8)
+        side = ttk.LabelFrame(body, text=" Pontos ", padding=6)
         side.pack(side="right", fill="y")
         self.count_var = tk.StringVar(value="0 pontos")
-        ttk.Label(side, textvariable=self.count_var, font=("Segoe UI", 12, "bold")).pack(pady=(0, 8))
+        ttk.Label(side, textvariable=self.count_var, font=("Segoe UI", 10, "bold")).pack(pady=(0, 5))
 
         list_frame = ttk.Frame(side)
         list_frame.pack(fill="both", expand=True)
-        self.points_canvas = tk.Canvas(list_frame, width=350, height=330, highlightthickness=0)
+        self.points_canvas = tk.Canvas(list_frame, width=300, height=270, highlightthickness=0)
         points_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.points_canvas.yview)
         self.points_rows = ttk.Frame(self.points_canvas)
         self.points_window = self.points_canvas.create_window((0, 0), window=self.points_rows, anchor="nw")
@@ -79,15 +77,13 @@ class SpatialMap:
         self.points_canvas.bind("<MouseWheel>", self._scroll_points)
 
         buttons = ttk.Frame(side)
-        buttons.pack(fill="x", pady=(8, 0))
+        buttons.pack(fill="x", pady=(6, 0))
         ttk.Button(buttons, text="Limpar pontos", command=self.clear).pack(fill="x")
-        ttk.Label(side, text="Clique esquerdo: adicionar / selecionar\nClique direito: apagar selecionado", font=("Segoe UI", 9)).pack(pady=(8, 0))
+        ttk.Label(side, text="Esquerdo: adicionar / selecionar\nDireito: apagar selecionado", font=("Segoe UI", 8)).pack(pady=(6, 0))
 
         self._geometry_changed()
 
     def _resize_page(self, event):
-        # A página acompanha a largura disponível, mas sua altura continua
-        # livre para permitir rolagem vertical.
         self.page_canvas.itemconfigure(self.page_window, width=event.width)
 
     def _scroll_page(self, event):
@@ -120,8 +116,8 @@ class SpatialMap:
         return self.size_mm / 2.0
 
     def _geometry(self):
-        width = max(self.canvas.winfo_width(), 400)
-        height = max(self.canvas.winfo_height(), 400)
+        width = max(self.canvas.winfo_width(), 320)
+        height = max(self.canvas.winfo_height(), 320)
         cx, cy = width / 2, height / 2
         half = self._half_size_mm()
         radius_px = min(width, height) / 2 - self.margin
@@ -145,7 +141,7 @@ class SpatialMap:
     def _point_at(self, px, py):
         for index, point in reversed(list(enumerate(self.points))):
             point_x, point_y = self._mm_to_px(point["x"], point["y"])
-            if math.hypot(px - point_x, py - point_y) <= 10:
+            if math.hypot(px - point_x, py - point_y) <= 9:
                 return index
         return None
 
@@ -208,20 +204,18 @@ class SpatialMap:
             child.destroy()
         for index, point in enumerate(self.points):
             row = tk.Frame(self.points_rows, bd=1, relief="solid")
-            row.pack(fill="x", pady=2)
+            row.pack(fill="x", pady=1)
             row.bind("<Button-1>", lambda _e, i=index: self._select(i))
             marker = "●" if self.selected_index == index else "○"
             tk.Button(row, text=marker, width=2, relief="flat", command=lambda i=index: self._select(i)).pack(side="left")
-            tk.Label(row, text=f"P{index + 1}", width=4, anchor="w").pack(side="left")
+            tk.Label(row, text=f"P{index + 1}", width=3, anchor="w").pack(side="left")
             x_var = tk.StringVar(value=f"{point['x']:.3f}")
             y_var = tk.StringVar(value=f"{point['y']:.3f}")
-            tk.Entry(row, textvariable=x_var, width=8, justify="center").pack(side="left", padx=2)
-            tk.Entry(row, textvariable=y_var, width=8, justify="center").pack(side="left", padx=2)
-            tk.Button(row, text="✓", width=3, relief="flat", command=lambda i=index, xv=x_var, yv=y_var: self._save_row(i, xv, yv)).pack(side="left", padx=2)
-            tk.Button(row, text="🗑", width=3, relief="flat", command=lambda i=index: self._delete_index(i)).pack(side="left", padx=2)
+            tk.Entry(row, textvariable=x_var, width=7, justify="center").pack(side="left", padx=1)
+            tk.Entry(row, textvariable=y_var, width=7, justify="center").pack(side="left", padx=1)
+            tk.Button(row, text="✓", width=2, relief="flat", command=lambda i=index, xv=x_var, yv=y_var: self._save_row(i, xv, yv)).pack(side="left", padx=1)
+            tk.Button(row, text="🗑", width=2, relief="flat", command=lambda i=index: self._delete_index(i)).pack(side="left", padx=1)
         self.count_var.set(f"{len(self.points)} ponto{'s' if len(self.points) != 1 else ''}")
-        if self.selected_index is not None and self.points:
-            self.points_canvas.after_idle(lambda: self.points_canvas.yview_moveto(min(1.0, self.selected_index / max(1, len(self.points)))))
 
     def _scroll_points(self, event):
         self.points_canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -245,15 +239,15 @@ class SpatialMap:
             self.canvas.create_rectangle(cx - radius_px, cy - radius_px, cx + radius_px, cy + radius_px, fill=colors["panel"], outline=colors["accent"], width=2)
         self.canvas.create_line(self.margin, cy, self.canvas.winfo_width() - self.margin, cy, fill=colors["border"], width=1)
         self.canvas.create_line(cx, self.margin, cx, self.canvas.winfo_height() - self.margin, fill=colors["border"], width=1)
-        self.canvas.create_text(self.canvas.winfo_width() - self.margin + 18, cy, text="+X", fill=colors["text"], font=("Segoe UI", 10, "bold"))
-        self.canvas.create_text(cx, self.margin - 15, text="+Y", fill=colors["text"], font=("Segoe UI", 10, "bold"))
-        self.canvas.create_text(cx + 18, cy + 15, text="0,0", fill=colors["text"], font=("Consolas", 9))
+        self.canvas.create_text(self.canvas.winfo_width() - self.margin + 12, cy, text="+X", fill=colors["text"], font=("Segoe UI", 9, "bold"))
+        self.canvas.create_text(cx, self.margin - 10, text="+Y", fill=colors["text"], font=("Segoe UI", 9, "bold"))
+        self.canvas.create_text(cx + 14, cy + 12, text="0,0", fill=colors["text"], font=("Consolas", 8))
         for i, point in enumerate(self.points, 1):
             px, py = self._mm_to_px(point["x"], point["y"])
             selected = self.selected_index == i - 1
-            r = 8 if selected else 6
+            r = 7 if selected else 5
             self.canvas.create_oval(px - r, py - r, px + r, py + r, fill=colors["danger"], outline=colors["text"] if selected else colors["danger"], width=2 if selected else 1)
-            self.canvas.create_text(px + 13, py - 13, text=str(i), fill=colors["text"], font=("Segoe UI", 10, "bold"))
+            self.canvas.create_text(px + 10, py - 10, text=str(i), fill=colors["text"], font=("Segoe UI", 9, "bold"))
 
     def refresh_theme(self):
         self._draw()
