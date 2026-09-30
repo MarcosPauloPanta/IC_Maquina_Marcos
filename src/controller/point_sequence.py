@@ -5,21 +5,24 @@ from dataclasses import dataclass
 
 @dataclass
 class MeasurementPoint:
-    """Ponto de análise: somente X varia entre pontos; Y fica fixo."""
+    """Um ponto da análise. Somente X varia entre pontos; Y fica fixo."""
 
     x_mm: float
-    label: str = ""
 
 
 class PointSequence:
-    """Lista ordenada de pontos X para uma análise sequencial."""
+    """Sequência simples e ordenada de posições X."""
 
     def __init__(self) -> None:
         self.points: list[MeasurementPoint] = []
         self.index = -1
 
-    def add(self, x_mm: float, label: str = "") -> None:
-        self.points.append(MeasurementPoint(float(x_mm), label.strip()))
+    def add(self, x_mm: float) -> None:
+        self.points.append(MeasurementPoint(float(x_mm)))
+
+    def set_points(self, positions_mm: list[float]) -> None:
+        self.points = [MeasurementPoint(float(x)) for x in positions_mm]
+        self.index = -1
 
     def remove(self, index: int) -> None:
         del self.points[index]
