@@ -8,10 +8,9 @@ install_analysis_scroll(MainWindow)
 
 def main():
     root = tk.Tk()
-    # A interface estava ocupando espaço demais em telas menores.
-    # 80% mantém os controles legíveis e deixa a linha de comando do
-    # Terminal visível/clicável sem alterar a lógica da máquina.
-    root.tk.call("tk", "scaling", 0.80)
+    # Escala normal do sistema. O problema de espaço do Terminal
+    # é resolvido pelo layout da janela, não reduzindo toda a GUI.
+    root.tk.call("tk", "scaling", 1.0)
     MainWindow(root)
     root.mainloop()
 
