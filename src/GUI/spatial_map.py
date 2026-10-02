@@ -54,13 +54,7 @@ class SpatialMap:
         zoom_frame = ttk.LabelFrame(self.page, text=" Escala do mapa ", padding=5)
         zoom_frame.pack(fill="x", pady=(0, 7))
         ttk.Label(zoom_frame, text="Pequeno").pack(side="left")
-        self.zoom_scale = ttk.Scale(
-            zoom_frame,
-            from_=0.75,
-            to=8.0,
-            variable=self.zoom_var,
-            command=self._zoom_changed,
-        )
+        self.zoom_scale = ttk.Scale(zoom_frame, from_=0.75, to=8.0, variable=self.zoom_var, command=self._zoom_changed)
         self.zoom_scale.pack(side="left", fill="x", expand=True, padx=8)
         self.zoom_value_label = ttk.Label(zoom_frame, text="1.00×", width=7, anchor="center")
         self.zoom_value_label.pack(side="left")
@@ -69,9 +63,6 @@ class SpatialMap:
         body = ttk.Frame(self.page)
         body.pack(fill="both", expand=True)
 
-        # O mapa possui sua própria área rolável. O usuário pode aumentar a
-        # escala sem perder pontos: barras horizontal e vertical permitem
-        # navegar pelo mapa como uma página grande.
         map_frame = ttk.Frame(body)
         map_frame.pack(side="left", fill="both", expand=True, padx=(0, 8))
         self.canvas = tk.Canvas(map_frame, width=self.canvas_size, height=self.canvas_size, highlightthickness=1, relief="flat")
@@ -171,6 +162,15 @@ class SpatialMap:
         cx, cy, _, scale = self._geometry()
         return (px - cx) / scale, (cy - py) / scale
 
+    def _canvas_point(self, event):
+        """Converte coordenada do mouse (viewport) em coordenada do canvas.
+
+        canvasx/canvasy são essenciais quando há zoom e barras de rolagem;
+        event.x/event.y sozinhos ficam relativos à janela visível e causam
+        exatamente o desalinhamento entre o cursor e o ponto.
+        """
+        return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+
     def _inside_sample(self, x, y):
         half = self._half_size_mm()
         if self.shape_var.get() == "Círculo":
@@ -188,13 +188,14 @@ class SpatialMap:
         return None
 
     def _on_left_click(self, event):
-        existing = self._point_at(event.x, event.y)
+        px, py = self._canvas_point(event)
+        existing = self._point_at(px, py)
         if existing is not None:
             self.selected_index = existing
             self._refresh_rows()
             self._draw()
             return
-        x, y = self._px_to_mm(event.x, event.y)
+        x, y = self._px_to_mm(px, py)
         if not self._inside_sample(x, y):
             return
         self.points.append({"x": x, "y": y})
@@ -203,7 +204,8 @@ class SpatialMap:
         self._draw()
 
     def _on_right_click(self, event):
-        index = self._point_at(event.x, event.y)
+        px, py = self._canvas_point(event)
+        index = self._point_at(px, py)
         if index is None:
             index = self.selected_index
         if index is None or not (0 <= index < len(self.points)):
@@ -287,8 +289,6 @@ class SpatialMap:
         for i, point in enumerate(self.points, 1):
             px, py = self._mm_to_px(point["x"], point["y"])
             selected = self.selected_index == i - 1
-            # O ponto mantém tamanho visual pequeno na tela; quem cresce é a
-            # distância entre os pontos, evitando que pontos próximos se cubram.
             r = 7 if selected else 5
             self.canvas.create_oval(px - r, py - r, px + r, py + r, fill=colors["danger"], outline=colors["text"] if selected else colors["danger"], width=2 if selected else 1)
             self.canvas.create_text(px + 10, py - 10, text=str(i), fill=colors["text"], font=("Segoe UI", 9, "bold"))
