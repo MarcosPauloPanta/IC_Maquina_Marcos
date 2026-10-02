@@ -34,6 +34,10 @@ class MainWindow:
         self.jog_direction = 0
         self.jog_refresh_id = None
         self.last_pos_request = 0
+        self.limit_window = None
+        self.limit_poll_id = None
+        self.limit_top_var = tk.StringVar(value="Desconhecido")
+        self.limit_bottom_var = tk.StringVar(value="Desconhecido")
         self.port_var = tk.StringVar(value="COM3")
         self.status_var = tk.StringVar(value="Desconectado")
         self.log_var = tk.StringVar(value="Pronto.")
@@ -71,6 +75,7 @@ class MainWindow:
         ttk.Button(c, text="Desconectar", command=self.disconnect).grid(row=0, column=3)
         self.status_label = tk.Label(c, textvariable=self.status_var, font=("Segoe UI", 10, "bold"))
         self.status_label.grid(row=0, column=4, padx=16)
+        ttk.Button(c, text="Estado dos botões Z", command=self.open_limit_window).grid(row=0, column=5, padx=(12, 4))
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=20, pady=8)
@@ -236,7 +241,6 @@ class MainWindow:
         for r, x in enumerate("XYZ"):
             ttk.Label(a, text=x, font=("Segoe UI", 10, "bold")).grid(row=r, column=0, padx=30, pady=7)
             ttk.Entry(a, textvariable=self.calibration_vars[x], width=19, font=("Segoe UI", 10)).grid(row=r, column=1, pady=7)
-
         move = ttk.LabelFrame(p, text=" Movimento por passos ", padding=8)
         move.pack(fill="x", pady=(0, 10))
         ttk.Label(move, text="Passos:").grid(row=0, column=0, padx=8, pady=6)
@@ -248,49 +252,38 @@ class MainWindow:
             ttk.Label(move, text=axis, font=("Segoe UI", 10, "bold")).grid(row=1, column=col * 2, padx=5, pady=7)
             ttk.Button(move, text=f"{axis} −", command=lambda a=axis: self._calibration_move(a, -1)).grid(row=1, column=col * 2 + 1, padx=3)
             ttk.Button(move, text=f"{axis} +", command=lambda a=axis: self._calibration_move(a, 1)).grid(row=2, column=col * 2 + 1, padx=3)
-
         z = ttk.LabelFrame(p, text=" Parâmetros do Z ", padding=8)
         z.pack(fill="x")
         fields = [("Descida máxima (mm)", self.z_down_mm_var), ("Velocidade de descida (passos/s)", self.z_speed_var), ("Recuo após contato (mm)", self.z_retract_mm_var), ("Tempo de permanência embaixo (s)", self.z_dwell_s_var)]
         for r, (label, var) in enumerate(fields):
             ttk.Label(z, text=label, font=("Segoe UI", 10)).grid(row=r, column=0, padx=12, pady=9, sticky="w")
             ttk.Entry(z, textvariable=var, width=19, font=("Segoe UI", 10)).grid(row=r, column=1, padx=12, pady=9)
-        b = ttk.Frame(p)
-        b.pack(pady=13)
+        b = ttk.Frame(p); b.pack(pady=13)
         ttk.Button(b, text="Aplicar", command=self.apply_calibration).pack(side="left")
         ttk.Button(b, text="Salvar", command=self.save_calibration).pack(side="left", padx=8)
         ttk.Button(b, text="Recarregar", command=self._reload_calibration).pack(side="left")
 
     def _calibration_move(self, axis, direction):
         if self.analysis_running:
-            self.log_var.set("Análise em execução.")
-            return
+            self.log_var.set("Análise em execução."); return
         if not self.arduino or not self.arduino.is_connected:
-            messagebox.showwarning("Calibração", "Conecte o Arduino primeiro.")
-            return
+            messagebox.showwarning("Calibração", "Conecte o Arduino primeiro."); return
         try:
-            steps = int(self.cal_move_steps_var.get())
-            speed = int(self.cal_move_speed_var.get())
-            if steps <= 0 or speed <= 0 or speed > 10000:
-                raise ValueError
+            steps = int(self.cal_move_steps_var.get()); speed = int(self.cal_move_speed_var.get())
+            if steps <= 0 or speed <= 0 or speed > 10000: raise ValueError
         except ValueError:
-            messagebox.showerror("Calibração", "Passos devem ser > 0 e velocidade entre 1 e 10000 passos/s.")
-            return
+            messagebox.showerror("Calibração", "Passos devem ser > 0 e velocidade entre 1 e 10000 passos/s."); return
         signed_steps = steps if direction > 0 else -steps
         try:
-            self._send_jog_stop()
-            self.arduino.move_steps(axis, signed_steps, speed)
-            self._apply_position_line(self.arduino.position())
-            self.log_var.set(f"MOVE {axis} {signed_steps} {speed} executado.")
+            self._send_jog_stop(); self.arduino.move_steps(axis, signed_steps, speed)
+            self._apply_position_line(self.arduino.position()); self.log_var.set(f"MOVE {axis} {signed_steps} {speed} executado.")
         except Exception as e:
-            self.log_var.set(f"Erro no MOVE {axis}: {e}")
-            messagebox.showerror("Calibração", str(e))
+            self.log_var.set(f"Erro no MOVE {axis}: {e}"); messagebox.showerror("Calibração", str(e))
 
     def _apply_z_values(self, show=False):
         try:
             d = float(self.z_down_mm_var.get().replace(",", ".")); s = int(self.z_speed_var.get()); r = float(self.z_retract_mm_var.get().replace(",", ".")); t = float(self.z_dwell_s_var.get().replace(",", "."))
-            assert d > 0 and s > 0 and r > 0 and t >= 0
-            return True
+            assert d > 0 and s > 0 and r > 0 and t >= 0; return True
         except (ValueError, AssertionError):
             if show: messagebox.showerror("Calibração", "Parâmetros do Z inválidos.")
             return False
@@ -298,18 +291,15 @@ class MainWindow:
     def apply_calibration(self):
         try:
             for a in "XYZ":
-                v = float(self.calibration_vars[a].get().replace(",", ".")); assert v > 0
-                self.machine.get_axis(a).set_calibration(v)
+                v = float(self.calibration_vars[a].get().replace(",", ".")); assert v > 0; self.machine.get_axis(a).set_calibration(v)
             return self._apply_z_values(True)
         except (ValueError, AssertionError):
-            messagebox.showerror("Calibração", "Passos/mm inválidos.")
-            return False
+            messagebox.showerror("Calibração", "Passos/mm inválidos."); return False
 
     def save_calibration(self):
         if not self.apply_calibration(): return
         d = {"axes_steps_per_mm": {a: self.machine.get_axis(a).microsteps_per_mm for a in "XYZ"}, "z_approach": {"down_mm": float(self.z_down_mm_var.get().replace(",", ".")), "speed_steps_s": int(self.z_speed_var.get()), "retract_mm": float(self.z_retract_mm_var.get().replace(",", ".")), "dwell_s": float(self.z_dwell_s_var.get().replace(",", "."))}}
-        CONFIG_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8")
-        self.log_var.set("Calibração salva.")
+        CONFIG_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8"); self.log_var.set("Calibração salva.")
 
     def _load_calibration(self):
         for a in "XYZ": self.calibration_vars[a].set(f"{self.machine.get_axis(a).microsteps_per_mm:.6f}")
@@ -324,13 +314,11 @@ class MainWindow:
             if "dwell_s" in z: self.z_dwell_s_var.set(str(z["dwell_s"]))
         except Exception: pass
 
-    def _reload_calibration(self):
-        self._load_calibration(); self.log_var.set("Calibração recarregada.")
+    def _reload_calibration(self): self._load_calibration(); self.log_var.set("Calibração recarregada.")
 
     def _terminal(self, p):
         ttk.Label(p, text="Terminal", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        self.terminal_history = tk.Text(p, font=("Consolas", 11), relief="flat")
-        self.terminal_history.pack(fill="both", expand=True)
+        self.terminal_history = tk.Text(p, font=("Consolas", 11), relief="flat"); self.terminal_history.pack(fill="both", expand=True)
         line = tk.Frame(p); line.pack(fill="x", pady=9)
         self.terminal_prompt = tk.Label(line, text="»", font=("Consolas", 15, "bold")); self.terminal_prompt.pack(side="left")
         self.terminal_command = tk.Entry(line, font=("Consolas", 12)); self.terminal_command.pack(side="left", fill="x", expand=True, ipady=6)
@@ -356,17 +344,55 @@ class MainWindow:
                 if time.monotonic() - self.last_pos_request > .25:
                     self.arduino.request_position(); self.last_pos_request = time.monotonic()
                 for line in self.arduino.read_available():
-                    if line.startswith("POS "): self._apply_position_line(line)
+                    if line.startswith("BUTTON TOP=") or line.startswith("BUTTON BOTTOM="):
+                        self._update_limit_from_button_line(line)
+                    elif line.startswith("LIMITS "):
+                        self._update_limit_from_limits_line(line)
+                    elif line.startswith("POS "): self._apply_position_line(line)
                     else: self._terminal_write(line)
             except Exception as e: self._terminal_write("SERIAL ERROR: " + str(e))
         self.root.after(100, self._poll_serial)
+
+    def _update_limit_from_button_line(self, line):
+        if "TOP=" in line: self.limit_top_var.set("ACIONADO" if "TOP=PRESSED" in line else "LIVRE")
+        if "BOTTOM=" in line: self.limit_bottom_var.set("ACIONADO" if "BOTTOM=PRESSED" in line else "LIVRE")
+
+    def _update_limit_from_limits_line(self, line):
+        self.limit_top_var.set("ACIONADO" if "TOP=PRESSED" in line else "LIVRE")
+        self.limit_bottom_var.set("ACIONADO" if "BOTTOM=PRESSED" in line else "LIVRE")
+
+    def open_limit_window(self):
+        if self.limit_window is not None and self.limit_window.winfo_exists(): self.limit_window.lift(); return
+        self.limit_window = tk.Toplevel(self.root); self.limit_window.title("Estado dos botões Z"); self.limit_window.resizable(False, False)
+        frame = ttk.Frame(self.limit_window, padding=18); frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Estado dos limites Z", font=("Segoe UI", 13, "bold")).pack(pady=(0, 12))
+        top = ttk.LabelFrame(frame, text=" Botão superior — A1 ", padding=12); top.pack(fill="x", pady=5)
+        ttk.Label(top, textvariable=self.limit_top_var, font=("Segoe UI", 12, "bold"), width=12, anchor="center").pack()
+        bottom = ttk.LabelFrame(frame, text=" Botão inferior — D11 / Z+ ", padding=12); bottom.pack(fill="x", pady=5)
+        ttk.Label(bottom, textvariable=self.limit_bottom_var, font=("Segoe UI", 12, "bold"), width=12, anchor="center").pack()
+        ttk.Label(frame, text="Atualização automática a cada 500 ms.").pack(pady=(10, 0))
+        self.limit_window.protocol("WM_DELETE_WINDOW", self.close_limit_window); self._poll_limits_window()
+
+    def _poll_limits_window(self):
+        if self.limit_window is None or not self.limit_window.winfo_exists(): self.limit_poll_id = None; return
+        if self.arduino and self.arduino.is_connected:
+            try: self.arduino.send("LIMITS")
+            except Exception: pass
+        self.limit_poll_id = self.root.after(500, self._poll_limits_window)
+
+    def close_limit_window(self):
+        if self.limit_poll_id is not None:
+            try: self.root.after_cancel(self.limit_poll_id)
+            except Exception: pass
+            self.limit_poll_id = None
+        if self.limit_window is not None and self.limit_window.winfo_exists(): self.limit_window.destroy()
+        self.limit_window = None
 
     def _apply_position_line(self, line):
         try:
             for token in line.split()[1:]:
                 axis, raw = token.split("=")
-                if axis in self.machine.axes:
-                    self.machine.get_axis(axis).current_position_mm = int(raw) / self.machine.get_axis(axis).microsteps_per_mm
+                if axis in self.machine.axes: self.machine.get_axis(axis).current_position_mm = int(raw) / self.machine.get_axis(axis).microsteps_per_mm
             self.refresh_positions()
         except (ValueError, IndexError): pass
 
@@ -388,8 +414,7 @@ class MainWindow:
     def _refresh_jog(self):
         self.jog_refresh_id = None
         if self.jog_axis is None or not self.arduino or not self.arduino.is_connected: return
-        try:
-            self.arduino.jog_start(self.jog_axis, self.jog_direction, int(self.jog_speed_var.get())); self._schedule_jog_refresh()
+        try: self.arduino.jog_start(self.jog_axis, self.jog_direction, int(self.jog_speed_var.get())); self._schedule_jog_refresh()
         except Exception: self._send_jog_stop()
 
     def _jog_release(self, event=None): self._send_jog_stop()
@@ -418,7 +443,7 @@ class MainWindow:
             self.status_var.set("Falha na conexão"); messagebox.showerror("Arduino", str(e))
 
     def disconnect(self):
-        self._send_jog_stop()
+        self._send_jog_stop(); self.close_limit_window()
         if self.arduino:
             try: self.arduino.disconnect()
             except Exception: pass
@@ -426,8 +451,7 @@ class MainWindow:
 
     def zero(self):
         if not self.arduino or not self.arduino.is_connected: messagebox.showwarning("ZERO", "Conecte o Arduino primeiro."); return
-        try:
-            self.arduino.send("ZERO"); self.machine.zero(); self.refresh_positions()
+        try: self.arduino.send("ZERO"); self.machine.zero(); self.refresh_positions()
         except Exception as e: messagebox.showerror("ZERO", str(e))
 
     def _colors(self): return self.DARK if self.dark_mode else self.LIGHT
@@ -438,18 +462,16 @@ class MainWindow:
 
     def _apply_theme(self):
         c = self._colors(); self.root.configure(bg=c["bg"]); self.header.configure(bg=c["bg"]); self.footer.configure(bg=c["bg"])
-        self.footer_label.configure(bg=c["bg"], fg=c["accent"]); self.footer_message.configure(bg=c["bg"], fg=c["text"])
-        self.status_label.configure(bg=c["panel"], fg=c["accent"])
+        self.footer_label.configure(bg=c["bg"], fg=c["accent"]); self.footer_message.configure(bg=c["bg"], fg=c["text"]); self.status_label.configure(bg=c["panel"], fg=c["accent"])
         self.stop_button.configure(bg=c["danger"], fg="white", activebackground=c["danger"], activeforeground="white")
         self.terminal_prompt.configure(bg=c["panel"], fg=c["accent"]); self.terminal_history.configure(bg=c["field"], fg=c["text"], insertbackground=c["text"]); self.terminal_command.configure(bg=c["field"], fg=c["text"], insertbackground=c["text"])
-        self.style.configure(".", background=c["panel"], foreground=c["text"], fieldbackground=c["field"], font=("Segoe UI", 10))
-        self.style.configure("TFrame", background=c["panel"]); self.style.configure("TLabel", background=c["panel"], foreground=c["text"], font=("Segoe UI", 10))
-        self.style.configure("TLabelframe", background=c["panel"], foreground=c["text"], bordercolor=c["border"]); self.style.configure("TLabelframe.Label", background=c["panel"], foreground=c["text"], font=("Segoe UI", 10, "bold"))
+        self.style.configure(".", background=c["panel"], foreground=c["text"], fieldbackground=c["field"], font=("Segoe UI", 10)); self.style.configure("TFrame", background=c["panel"])
+        self.style.configure("TLabel", background=c["panel"], foreground=c["text"], font=("Segoe UI", 10)); self.style.configure("TLabelframe", background=c["panel"], foreground=c["text"], bordercolor=c["border"]); self.style.configure("TLabelframe.Label", background=c["panel"], foreground=c["text"], font=("Segoe UI", 10, "bold"))
         self.style.configure("TButton", background=c["panel"], foreground=c["text"], font=("Segoe UI", 10, "bold"), padding=(10, 6)); self.style.map("TButton", background=[("active", c["field"])], foreground=[("active", c["text"])])
         self.style.configure("TNotebook", background=c["bg"], borderwidth=0); self.style.configure("TNotebook.Tab", background=c["field"], foreground=c["text"], padding=(14, 8), font=("Segoe UI", 10, "bold")); self.style.map("TNotebook.Tab", background=[("selected", c["panel"])], foreground=[("selected", c["text"])])
 
     def close(self):
-        self._send_jog_stop(); self.disconnect(); self.root.destroy()
+        self.close_limit_window(); self._send_jog_stop(); self.disconnect(); self.root.destroy()
 
 
 def main():
