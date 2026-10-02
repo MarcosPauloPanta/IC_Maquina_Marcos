@@ -28,6 +28,7 @@ const uint8_t Z_STEP = 4;
 const uint8_t Z_DIR = 7;
 const uint8_t ENABLE_PIN = 8;
 
+// HIGH = botao pressionado/ativo; LOW = botao livre.
 const uint8_t Z_TOP_BUTTON = A1;
 const uint8_t Z_BOTTOM_BUTTON = 11;
 const uint8_t LIMIT_ACTIVE_LEVEL = HIGH;
@@ -62,6 +63,12 @@ long position_steps[3] = {0, 0, 0};
 bool drivers_enabled = false;
 String input_line;
 
+// Estado anterior dos botoes, usado para avisar a GUI/terminal
+// imediatamente quando um deles muda de estado.
+bool last_top_state = false;
+bool last_bottom_state = false;
+bool button_state_initialized = false;
+
 uint8_t stepPin(char axis) {
   if (axis == 'X') return X_STEP;
   if (axis == 'Y') return Y_STEP;
@@ -90,6 +97,34 @@ bool zTopPressed() {
 
 bool zBottomPressed() {
   return digitalRead(Z_BOTTOM_BUTTON) == LIMIT_ACTIVE_LEVEL;
+}
+
+void reportButtonChanges() {
+  bool top = zTopPressed();
+  bool bottom = zBottomPressed();
+
+  if (!button_state_initialized) {
+    last_top_state = top;
+    last_bottom_state = bottom;
+    button_state_initialized = true;
+    return;
+  }
+
+  if (top != last_top_state) {
+    Serial.print(F("BUTTON TOP="));
+    Serial.print(top ? F("PRESSED") : F("RELEASED"));
+    Serial.print(F(" RAW="));
+    Serial.println(digitalRead(Z_TOP_BUTTON));
+    last_top_state = top;
+  }
+
+  if (bottom != last_bottom_state) {
+    Serial.print(F("BUTTON BOTTOM="));
+    Serial.print(bottom ? F("PRESSED") : F("RELEASED"));
+    Serial.print(F(" RAW="));
+    Serial.println(digitalRead(Z_BOTTOM_BUTTON));
+    last_bottom_state = bottom;
+  }
 }
 
 bool validSpeed(long speed) {
@@ -132,10 +167,8 @@ bool softLimitBlocks(char axis, int direction) {
   return (direction < 0 && pos <= minimum) || (direction > 0 && pos >= maximum);
 }
 
-// Convencao atual:
-//   Z+ (direction +1) = DESCER = DIR LOW
-//   Z- (direction -1) = SUBIR = DIR HIGH
-// Os botoes permanecem ligados a protecao fisica correspondente.
+// Z+ = DESCER; Z- = SUBIR.
+// Botao superior bloqueia descida; botao inferior bloqueia subida.
 bool zLimitBlocks(int direction) {
   if (direction > 0) return zTopPressed();
   return zBottomPressed();
@@ -239,12 +272,13 @@ void startZApproach(long downSteps, unsigned long speed, long retractSteps) {
 
   enableDrivers();
   moving_axis = 'Z';
-  moving_direction = 1;
+  moving_direction = 1;  // Z+ = descida
   moving_speed_sps = speed;
   remaining_steps = downSteps;
   (void)retractSteps;
 
-  digitalWrite(Z_DIR, LOW);
+  // Corrigido: nesta montagem, HIGH no DIR corresponde fisicamente a Z+ / descida.
+  digitalWrite(Z_DIR, HIGH);
 
   if (zTopPressed()) {
     remaining_steps = 0;
@@ -273,10 +307,12 @@ void startZRetract(long steps, unsigned long speed) {
 
   enableDrivers();
   moving_axis = 'Z';
-  moving_direction = -1;
+  moving_direction = -1; // Z- = subida
   moving_speed_sps = speed;
   remaining_steps = steps;
-  digitalWrite(Z_DIR, HIGH);
+
+  // Corrigido: LOW no DIR corresponde fisicamente a Z- / subida.
+  digitalWrite(Z_DIR, LOW);
   mode = Z_RETRACT;
   Serial.println(F("ACK Z_RETRACT"));
 }
@@ -396,7 +432,8 @@ void setup() {
   pinMode(Y_STEP, OUTPUT); pinMode(Y_DIR, OUTPUT);
   pinMode(Z_STEP, OUTPUT); pinMode(Z_DIR, OUTPUT);
   pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(Z_TOP_BUTTON, INPUT); pinMode(Z_BOTTOM_BUTTON, INPUT);
+  pinMode(Z_TOP_BUTTON, INPUT);
+  pinMode(Z_BOTTOM_BUTTON, INPUT);
 
   digitalWrite(X_STEP, LOW); digitalWrite(Y_STEP, LOW); digitalWrite(Z_STEP, LOW);
   digitalWrite(ENABLE_PIN, HIGH);
@@ -413,6 +450,10 @@ void loop() {
       if (input_line.length()) { handleCommand(input_line); input_line = ""; }
     } else if (input_line.length() < 95) input_line += c;
   }
+
+  // Mostra no terminal sempre que um dos botoes muda de estado.
+  reportButtonChanges();
+
   executeMotion();
   if (mode == IDLE && drivers_enabled && millis() - last_activity_ms >= IDLE_DISABLE_MS) disableDrivers();
 }
