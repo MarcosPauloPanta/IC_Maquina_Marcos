@@ -8,8 +8,7 @@ install_analysis_scroll(MainWindow)
 
 def main():
     root = tk.Tk()
-    # Escala normal do sistema. O problema de espaço do Terminal
-    # é resolvido pelo layout da janela, não reduzindo toda a GUI.
+    # Escala normal (100%). O espaço do Terminal é resolvido no próprio layout.
     root.tk.call("tk", "scaling", 1.0)
     MainWindow(root)
     root.mainloop()
