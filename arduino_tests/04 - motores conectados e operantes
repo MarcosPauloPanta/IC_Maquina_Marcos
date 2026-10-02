@@ -2,9 +2,10 @@
 // CONTROLADOR DE MOTORES - CNC Shield V3 + A4988 + Arduino Uno
 // ============================================================
 // UM EIXO POR VEZ.
-// Z+ = DESCIDA | Z- = SUBIDA
-// A1  = botao de cima  -> bloqueia Z+
-// D11 = botao de baixo -> bloqueia Z-
+// INTERFACE: Z- = DESCIDA | Z+ = SUBIDA
+// FIRMWARE FISICO: Z+ = DESCIDA | Z- = SUBIDA
+// A1  = botao de cima  -> bloqueia DESCIDA
+// D11 = botao de baixo -> bloqueia SUBIDA
 // HIGH = acionado | LOW = livre
 // ============================================================
 
@@ -60,8 +61,11 @@ bool softLimitBlocks(char axis, int direction) {
   return (direction < 0 && pos <= minimum) || (direction > 0 && pos >= maximum);
 }
 
-// Regra fisica atual: Z+ desce; Z- sobe.
-bool zLimitBlocks(int direction) { if (direction > 0) return zTopPressed(); return zBottomPressed(); }
+// Direcao FISICA do Z: + = descida, - = subida.
+bool zLimitBlocks(int physicalDirection) {
+  if (physicalDirection > 0) return zTopPressed();
+  return zBottomPressed();
+}
 void stopMotion() { mode = IDLE; remaining_steps = 0; last_activity_ms = millis(); }
 
 void printPosition() {
@@ -72,36 +76,42 @@ void printLimits() {
   Serial.print(F(" RAW_TOP=")); Serial.print(digitalRead(Z_TOP_BUTTON)); Serial.print(F(" RAW_BOTTOM=")); Serial.println(digitalRead(Z_BOTTOM_BUTTON));
 }
 
-void setDirection(char axis, int direction) {
-  // Sinais publicos: + = sentido positivo; - = sentido negativo.
-  // No Z, + = descida e - = subida.
-  digitalWrite(dirPin(axis), direction > 0 ? HIGH : LOW);
+void setDirection(char axis, int physicalDirection) {
+  digitalWrite(dirPin(axis), physicalDirection > 0 ? HIGH : LOW);
 }
 
 void startMove(char axis, long signedSteps, unsigned long speed) {
   if (!validAxis(axis) || signedSteps == 0 || !validSpeed((long)speed)) { Serial.println(F("ERR BAD_MOVE")); return; }
   if (mode != IDLE) { Serial.println(F("ERR BUSY")); return; }
-  int direction = signedSteps > 0 ? 1 : -1;
+
+  // X/Y: sinal da interface = sinal fisico.
+  // Z: interface Z- = descida e Z+ = subida, enquanto o driver fisico usa + = descida.
+  int commandDirection = signedSteps > 0 ? 1 : -1;
+  int physicalDirection = (axis == 'Z') ? -commandDirection : commandDirection;
   long steps = signedSteps > 0 ? signedSteps : -signedSteps;
-  if ((axis == 'Z' && zLimitBlocks(direction)) || softLimitBlocks(axis, direction)) { Serial.println(F("LIMIT")); return; }
-  enableDrivers(); setDirection(axis, direction);
-  moving_axis = axis; moving_direction = direction; moving_speed_sps = speed; remaining_steps = steps; mode = NORMAL_MOVE;
+
+  if ((axis == 'Z' && zLimitBlocks(physicalDirection)) || softLimitBlocks(axis, physicalDirection)) { Serial.println(F("LIMIT")); return; }
+  enableDrivers(); setDirection(axis, physicalDirection);
+  moving_axis = axis; moving_direction = physicalDirection; moving_speed_sps = speed; remaining_steps = steps; mode = NORMAL_MOVE;
   Serial.println(F("ACK MOVE"));
 }
 
-void startJog(char axis, int direction, unsigned long speed) {
-  if (!validAxis(axis) || !validSpeed((long)speed) || (direction != 1 && direction != -1)) { Serial.println(F("ERR BAD_JOG")); return; }
-  if (mode != IDLE) { if (mode == CONTINUOUS_JOG && axis == moving_axis && direction == moving_direction) { moving_speed_sps = speed; last_jog_ms = millis(); return; } Serial.println(F("ERR BUSY")); return; }
-  if ((axis == 'Z' && zLimitBlocks(direction)) || softLimitBlocks(axis, direction)) { Serial.println(F("LIMIT")); return; }
-  enableDrivers(); setDirection(axis, direction);
-  moving_axis = axis; moving_direction = direction; moving_speed_sps = speed; last_jog_ms = millis(); mode = CONTINUOUS_JOG;
+void startJog(char axis, int commandDirection, unsigned long speed) {
+  if (!validAxis(axis) || !validSpeed((long)speed) || (commandDirection != 1 && commandDirection != -1)) { Serial.println(F("ERR BAD_JOG")); return; }
+  if (mode != IDLE) { if (mode == CONTINUOUS_JOG && axis == moving_axis && commandDirection == moving_direction) { moving_speed_sps = speed; last_jog_ms = millis(); return; } Serial.println(F("ERR BUSY")); return; }
+
+  // JOG: interface Z- = descida, Z+ = subida.
+  int physicalDirection = (axis == 'Z') ? -commandDirection : commandDirection;
+  if ((axis == 'Z' && zLimitBlocks(physicalDirection)) || softLimitBlocks(axis, physicalDirection)) { Serial.println(F("LIMIT")); return; }
+  enableDrivers(); setDirection(axis, physicalDirection);
+  moving_axis = axis; moving_direction = physicalDirection; moving_speed_sps = speed; last_jog_ms = millis(); mode = CONTINUOUS_JOG;
 }
 
 void startZApproach(long downSteps, unsigned long speed, long retractSteps) {
   if (downSteps <= 0 || retractSteps <= 0 || !validSpeed((long)speed)) { Serial.println(F("ERR BAD_Z_APPROACH")); return; }
   if (mode != IDLE) { Serial.println(F("ERR BUSY")); return; }
   if (zTopPressed()) { Serial.println(F("Z_APPROACH_READY LIMIT_TOP")); return; }
-  enableDrivers(); setDirection('Z', 1);
+  enableDrivers(); setDirection('Z', 1); // Z fisico + = descida
   moving_axis = 'Z'; moving_direction = 1; moving_speed_sps = speed; remaining_steps = downSteps; mode = Z_APPROACH_DOWN;
   Serial.println(F("ACK Z_APPROACH"));
 }
@@ -110,7 +120,7 @@ void startZRetract(long steps, unsigned long speed) {
   if (steps <= 0 || !validSpeed((long)speed)) { Serial.println(F("ERR BAD_Z_RETRACT")); return; }
   if (mode != IDLE) { Serial.println(F("ERR BUSY")); return; }
   if (zBottomPressed()) { Serial.println(F("LIMIT Z_BOTTOM")); return; }
-  enableDrivers(); setDirection('Z', -1);
+  enableDrivers(); setDirection('Z', -1); // Z fisico - = subida
   moving_axis = 'Z'; moving_direction = -1; moving_speed_sps = speed; remaining_steps = steps; mode = Z_RETRACT;
   Serial.println(F("ACK Z_RETRACT"));
 }
