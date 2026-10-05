@@ -172,23 +172,27 @@ class ArduinoController:
             raise RuntimeError(result)
 
     def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> None:
-        """Desce o Z (Z-) até o limite A1 ou até o máximo configurado."""
+        """Desce o Z usando o comando aceito pelo firmware atual.
+
+        O firmware responde com Z_APPROACH_READY quando chega ao limite
+        superior ou quando atinge o máximo de passos configurado.
+        """
         if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
         self._clear_rx_queue()
-        self.send_nowait(f"Z_DOWN {int(steps)} {int(speed_steps_s)}")
+        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
         result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
         if not result.startswith("Z_APPROACH_READY"):
             raise RuntimeError(result)
 
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
-        """Sobe o Z (Z+) usando o limite D11 como proteção."""
+        """Sobe o Z usando o comando aceito pelo firmware atual."""
         if steps <= 0 or speed_steps_s <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
         self._clear_rx_queue()
-        self.send_nowait(f"Z_UP {int(steps)} {int(speed_steps_s)}")
+        self.send_nowait(f"Z_RETRACT {int(steps)} {int(speed_steps_s)}")
         result = self.wait_for_motion()
-        if result.startswith(("LIMIT", "Z_UP_LIMIT")):
+        if result.startswith(("LIMIT", "Z_DOWN_LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
         if not result.startswith("DONE"):
             raise RuntimeError(result)
