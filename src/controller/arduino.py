@@ -7,7 +7,7 @@ from typing import Optional
 
 
 class ArduinoController:
-    """Comunicação serial entre a GUI e o Arduino."""
+    """Comunicação serial entre a GUI e o firmware do Arduino."""
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.25):
         self.port = port
@@ -29,10 +29,12 @@ class ArduinoController:
             raise RuntimeError("PySerial não está instalado. Execute: pip install -r requirements.txt") from exc
         if self.is_connected:
             return
+
         self._serial = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
         time.sleep(2.0)
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
+
         self._serial.write(b"PING\n")
         self._serial.flush()
         response = self._serial.readline().decode("ascii", errors="replace").strip()
@@ -40,6 +42,7 @@ class ArduinoController:
             self._serial.close()
             self._serial = None
             raise RuntimeError(f"Arduino respondeu algo inesperado ao PING: {response!r}")
+
         self._reader_stop.clear()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -128,7 +131,7 @@ class ArduinoController:
                 continue
             if line.startswith("ERR"):
                 raise RuntimeError(line)
-            if line.startswith("LIMIT"):
+            if line.startswith("LIMIT") or line.startswith("Z_DOWN_LIMIT") or line.startswith("Z_UP_LIMIT"):
                 return line
             if ready_prefix and line.startswith(ready_prefix):
                 return line
@@ -165,32 +168,27 @@ class ArduinoController:
         self._clear_rx_queue()
         self.send_nowait(f"MOVE {axis} {int(steps)} {int(speed_steps_s)}")
         result = self.wait_for_motion()
-        if result.startswith("LIMIT"):
+        if result.startswith(("LIMIT", "Z_DOWN_LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
 
     def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> None:
-        """Desce fisicamente o Z usando o comando Z_APPROACH do firmware.
-
-        O firmware define Z+ como descida. Ao atingir o botão superior,
-        ele encerra o movimento com Z_APPROACH_READY e a análise pode
-        continuar para o tempo de permanência.
-        """
+        """Desce o Z (Z-) até o limite A1 ou até o máximo configurado."""
         if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
         self._clear_rx_queue()
-        self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
+        self.send_nowait(f"Z_DOWN {int(steps)} {int(speed_steps_s)}")
         result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
         if not result.startswith("Z_APPROACH_READY"):
             raise RuntimeError(result)
 
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
-        """Sobe fisicamente o Z usando o comando Z_RETRACT do firmware."""
+        """Sobe o Z (Z+) usando o limite D11 como proteção."""
         if steps <= 0 or speed_steps_s <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
         self._clear_rx_queue()
-        self.send_nowait(f"Z_RETRACT {int(steps)} {int(speed_steps_s)}")
+        self.send_nowait(f"Z_UP {int(steps)} {int(speed_steps_s)}")
         result = self.wait_for_motion()
-        if result.startswith("LIMIT"):
+        if result.startswith(("LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
         if not result.startswith("DONE"):
             raise RuntimeError(result)
