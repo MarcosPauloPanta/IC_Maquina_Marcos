@@ -14,8 +14,8 @@
 //   ENABLE = D8
 //
 // LIMITES FISICOS DO Z:
-//   A1  = BOTAO DE CIMA (limita a subida)
-//   D11 = BOTAO DE BAIXO (HOLD; encerra a descida)
+//   D11 = BOTAO DE CIMA (limita a subida)
+//   A1  = BOTAO DE BAIXO (HOLD; encerra a descida)
 //   BOTAO PRESSIONADO = HIGH
 //
 // CONVENCAO LOGICA DO PROJETO:
@@ -53,8 +53,8 @@ const uint8_t Z_STEP = 4;
 const uint8_t Z_DIR  = 7;
 const uint8_t ENABLE_PIN = 8;
 
-const uint8_t Z_TOP_BUTTON = A1;
-const uint8_t Z_BOTTOM_BUTTON = 11;
+const uint8_t Z_TOP_BUTTON = 11;
+const uint8_t Z_BOTTOM_BUTTON = A1;
 const uint8_t LIMIT_ACTIVE_LEVEL = HIGH;
 
 const unsigned int STEP_PULSE_US = 5;
@@ -475,7 +475,7 @@ void setup() {
   Serial.begin(BAUD_RATE);
   Serial.println(F("Arduino pronto."));
   Serial.println(F("Z fisico = SLOT Z (D4/D7)."));
-  Serial.println(F("TOP=A1 | BOTTOM=D11 | PRESSED=HIGH"));
+  Serial.println(F("TOP=D11 | BOTTOM=A1 (HOLD) | PRESSED=HIGH"));
   Serial.println(F("Z+ = DESCIDA | Z- = SUBIDA"));
   Serial.println(F("Comandos: PING, STATUS, LIMITS, POS, MOVE, JOG_START, JOG_STOP, STOP, Z_APPROACH, Z_RETRACT"));
 }
