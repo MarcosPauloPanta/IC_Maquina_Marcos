@@ -23,8 +23,14 @@ class MainWindow:
     def __init__(self, root):
         self.root = root
         self.root.title("Máquina de Análise")
+        # Inicia maximizada, mas permite redimensionar normalmente.
+        # Isso dá espaço para a GUI sem depender de uma resolução específica.
         self.root.geometry("1120x820")
-        self.root.minsize(980, 720)
+        self.root.minsize(800, 600)
+        try:
+            self.root.state("zoomed")  # Maximizada no Windows
+        except tk.TclError:
+            pass
         self.arduino = None
         self.machine = Machine(Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400))
         self.sequence = PointSequence()
@@ -61,6 +67,45 @@ class MainWindow:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(100, self._poll_serial)
 
+    def _scrollable_tab(self, notebook, padding=12):
+        """Cria uma aba com rolagem vertical para telas menores e conteúdo longo."""
+        page = ttk.Frame(notebook)
+        page.rowconfigure(0, weight=1)
+        page.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(page, highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        content = ttk.Frame(canvas, padding=padding)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def update_scroll_region(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def fit_content_width(event):
+            canvas.itemconfigure(window_id, width=event.width)
+
+        content.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", fit_content_width)
+
+        # A rolagem do mouse só é capturada quando o ponteiro está nesta aba.
+        def wheel_on(_event=None):
+            canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+            canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+            canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+        def wheel_off(_event=None):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", wheel_on)
+        canvas.bind("<Leave>", wheel_off)
+        return page, content
+
     def _build(self):
         self.header = tk.Frame(self.root)
         self.header.pack(fill="x", padx=20, pady=12)
@@ -79,15 +124,17 @@ class MainWindow:
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=20, pady=8)
-        op = ttk.Frame(nb, padding=18)
-        an = ttk.Frame(nb, padding=18)
-        te = ttk.Frame(nb, padding=18)
-        ca = ttk.Frame(nb, padding=18)
+        # Abas longas usam uma área rolável: nenhum controle fica escondido
+        # quando a janela está maximizada ou quando a resolução é menor.
+        op_page, op = self._scrollable_tab(nb, padding=14)
+        an_page, an = self._scrollable_tab(nb, padding=14)
+        te = ttk.Frame(nb, padding=14)
+        ca_page, ca = self._scrollable_tab(nb, padding=14)
         mp = ttk.Frame(nb, padding=0)
-        nb.add(op, text="Operação")
-        nb.add(an, text="Análise")
+        nb.add(op_page, text="Operação")
+        nb.add(an_page, text="Análise")
         nb.add(te, text="Terminal")
-        nb.add(ca, text="Calibração")
+        nb.add(ca_page, text="Calibração")
         nb.add(mp, text="Mapa Espacial")
         self._operation(op)
         self._analysis(an)
