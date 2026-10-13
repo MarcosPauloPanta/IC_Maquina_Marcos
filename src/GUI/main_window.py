@@ -254,8 +254,20 @@ class MainWindow:
                 steps = -round((target - current) * self.machine.x.microsteps_per_mm)
                 if steps:
                     self.arduino.move_steps("X", steps, 500)
-                self.arduino.z_approach(down, speed, retract)
+                # O Z só deve esperar e subir depois que o botão confirmar contato.
+                # MAX_STEPS significa que a descida terminou sem confirmar o botão.
+                contact_result = self.arduino.z_approach(down, speed, retract)
+                if "LIMIT" not in contact_result:
+                    raise RuntimeError(
+                        "O Z atingiu a quantidade máxima de passos sem confirmar "
+                        "o botão. A subida automática não foi iniciada. "
+                        f"Resposta do Arduino: {contact_result}"
+                    )
+
+                # A permanência é contada depois que o botão foi acionado.
                 time.sleep(dwell)
+
+                # Depois da espera, o Z sobe pela distância configurada.
                 self.arduino.z_retract(retract, speed)
                 self._apply_position_line(self.arduino.position())
                 current = target
