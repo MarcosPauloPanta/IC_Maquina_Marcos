@@ -14,8 +14,8 @@
 //   ENABLE = D8
 //
 // LIMITES FISICOS DO Z:
-//   A1  = BOTAO DE CIMA
-//   D11 = BOTAO DE BAIXO (HOLD)
+//   A1  = BOTAO DE CIMA (limita a subida)
+//   D11 = BOTAO DE BAIXO (HOLD; encerra a descida)
 //   BOTAO PRESSIONADO = HIGH
 //
 // CONVENCAO LOGICA DO PROJETO:
@@ -166,11 +166,11 @@ void setDirection(char axis, int direction) {
 }
 
 bool zLimitBlocks(int direction) {
-  // Z+ = descida: botao de cima limita essa direcao.
-  if (direction > 0) return zTopPressed();
+  // Z+ = descida: o botao inferior (D11 / HOLD) encerra a descida.
+  if (direction > 0) return zBottomPressed();
 
-  // Z- = subida: botao de baixo limita essa direcao.
-  return zBottomPressed();
+  // Z- = subida: o botao superior (A1) limita a subida.
+  return zTopPressed();
 }
 
 void stopMotion() {
@@ -255,8 +255,8 @@ void startZApproach(long downSteps, unsigned long speed, long retractSteps) {
   }
   if (mode != IDLE) { Serial.println(F("ERR BUSY")); return; }
 
-  if (zTopPressed()) {
-    Serial.println(F("Z_APPROACH_READY LIMIT_TOP")); return;
+  if (zBottomPressed()) {
+    Serial.println(F("Z_APPROACH_READY LIMIT_BOTTOM")); return;
   }
 
   enableDrivers();
@@ -274,7 +274,7 @@ void startZRetract(long steps, unsigned long speed) {
     Serial.println(F("ERR BAD_Z_RETRACT")); return;
   }
   if (mode != IDLE) { Serial.println(F("ERR BUSY")); return; }
-  if (zBottomPressed()) { Serial.println(F("LIMIT Z_BOTTOM")); return; }
+  if (zTopPressed()) { Serial.println(F("LIMIT Z_TOP")); return; }
 
   enableDrivers();
   moving_axis = 'Z';
