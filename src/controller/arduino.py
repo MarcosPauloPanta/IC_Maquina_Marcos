@@ -171,11 +171,11 @@ class ArduinoController:
         if result.startswith(("LIMIT", "Z_DOWN_LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
 
-    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> None:
-        """Desce o Z usando o comando aceito pelo firmware atual.
+    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> str:
+        """Desce o Z e devolve o motivo informado pelo Arduino.
 
-        O firmware responde com Z_APPROACH_READY quando chega ao limite
-        superior ou quando atinge o máximo de passos configurado.
+        A GUI usa esse retorno para distinguir o acionamento do botão
+        (LIMIT) do fim da quantidade máxima de passos (MAX_STEPS).
         """
         if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
@@ -184,6 +184,7 @@ class ArduinoController:
         result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
         if not result.startswith("Z_APPROACH_READY"):
             raise RuntimeError(result)
+        return result
 
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
         """Sobe o Z usando o comando aceito pelo firmware atual."""
