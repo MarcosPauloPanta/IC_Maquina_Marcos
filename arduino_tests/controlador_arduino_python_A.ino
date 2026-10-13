@@ -166,10 +166,10 @@ void setDirection(char axis, int direction) {
 }
 
 bool zLimitBlocks(int direction) {
-  // Z+ = descida: o botao inferior (D11 / HOLD) encerra a descida.
+  // Z+ = descida: o botao inferior (A1 / HOLD) encerra a descida.
   if (direction > 0) return zBottomPressed();
 
-  // Z- = subida: o botao superior (A1) limita a subida.
+  // Z- = subida: o botao superior (D11) limita a subida.
   return zTopPressed();
 }
 
