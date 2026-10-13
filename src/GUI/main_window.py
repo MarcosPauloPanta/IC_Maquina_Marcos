@@ -57,6 +57,8 @@ class MainWindow:
         self.z_speed_var = tk.StringVar(value="200")
         self.z_retract_mm_var = tk.StringVar(value="1.000")
         self.z_dwell_s_var = tk.StringVar(value="1.000")
+        # Modo de contato: desce até o botão e retorna ao Z inicial.
+        self.z_touch_mode_var = tk.BooleanVar(value=False)
         self.cal_move_steps_var = tk.StringVar(value="1000")
         self.cal_move_speed_var = tk.StringVar(value="500")
         self.style = ttk.Style(root)
@@ -185,6 +187,16 @@ class MainWindow:
         ttk.Spinbox(setup, from_=1, to=100, width=8, textvariable=self.point_count_var).pack(side="left")
         ttk.Button(setup, text="Criar", command=self.create_point_fields).pack(side="left", padx=10)
         ttk.Button(setup, text="Limpar", command=self.clear_points).pack(side="left")
+        ttk.Checkbutton(
+            p,
+            text="Modo contato: descer até acionar o botão inferior e voltar à posição inicial",
+            variable=self.z_touch_mode_var,
+        ).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            p,
+            text="Nesse modo, 'Descida máxima' é apenas o limite de segurança; o tempo embaixo vem da aba Calibração.",
+            wraplength=900,
+        ).pack(anchor="w", pady=(0, 8))
         self.point_table = ttk.LabelFrame(p, text=" Posições X ", padding=6)
         self.point_table.pack(fill="both", expand=True)
         ttk.Label(self.point_table, text="Ponto", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=45, pady=9)
@@ -254,9 +266,43 @@ class MainWindow:
                 steps = -round((target - current) * self.machine.x.microsteps_per_mm)
                 if steps:
                     self.arduino.move_steps("X", steps, 500)
-                self.arduino.z_approach(down, speed, retract)
-                time.sleep(dwell)
-                self.arduino.z_retract(retract, speed)
+                if self.z_touch_mode_var.get():
+                    # Guarda a posição Z antes da descida para voltar exatamente a ela.
+                    z_before = self.arduino.position_steps("Z")
+                    result = self.arduino.z_approach(down, speed, retract)
+                    z_after = self.arduino.position_steps("Z")
+                    descended_steps = z_after - z_before
+
+                    if result == "Z_APPROACH_READY LIMIT":
+                        if descended_steps <= 0:
+                            raise RuntimeError(
+                                "O botão de contato já estava acionado ou o Z não desceu. "
+                                "Análise interrompida por segurança."
+                            )
+                        time.sleep(dwell)
+                        self.arduino.z_retract(descended_steps, speed)
+                    elif result == "Z_APPROACH_READY MAX_STEPS":
+                        # Não houve contato: tenta voltar pelo mesmo percurso e interrompe a análise.
+                        if descended_steps > 0:
+                            self.arduino.z_retract(descended_steps, speed)
+                        raise RuntimeError(
+                            "O Z atingiu a descida máxima sem acionar o botão inferior. "
+                            "A análise foi interrompida; confira o botão e o limite de segurança."
+                        )
+                    elif result == "Z_APPROACH_READY LIMIT_BOTTOM":
+                        raise RuntimeError(
+                            "O botão inferior já estava acionado antes da descida. "
+                            "Verifique a posição do Z e libere o botão antes de iniciar."
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"Resposta inesperada durante a descida por contato: {result}"
+                        )
+                else:
+                    # Modo antigo: mantém descida e recuo pelas distâncias configuradas.
+                    self.arduino.z_approach(down, speed, retract)
+                    time.sleep(dwell)
+                    self.arduino.z_retract(retract, speed)
                 self._apply_position_line(self.arduino.position())
                 current = target
                 self.root.after(0, lambda i=i, n=len(points): self._progress(i, n))
