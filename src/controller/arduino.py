@@ -171,12 +171,8 @@ class ArduinoController:
         if result.startswith(("LIMIT", "Z_DOWN_LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
 
-    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> None:
-        """Desce o Z usando o comando aceito pelo firmware atual.
-
-        O firmware responde com Z_APPROACH_READY quando chega ao limite
-        superior ou quando atinge o máximo de passos configurado.
-        """
+    def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> str:
+        """Desce o Z e devolve o motivo da parada informado pelo firmware."""
         if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
         self._clear_rx_queue()
@@ -184,8 +180,9 @@ class ArduinoController:
         result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
         if not result.startswith("Z_APPROACH_READY"):
             raise RuntimeError(result)
+        return result
 
-    def z_retract(self, steps: int, speed_steps_s: int) -> None:
+    def z_retract(self, steps: int, speed_steps_s: int) -> None
         """Sobe o Z usando o comando aceito pelo firmware atual."""
         if steps <= 0 or speed_steps_s <= 0:
             raise ValueError("Parâmetros do Z inválidos.")
@@ -209,6 +206,18 @@ class ArduinoController:
 
     def limits(self) -> str:
         return self.send("LIMITS")
+
+    def position_steps(self, axis: str) -> int:
+        """Retorna a posição estimada, em passos, do eixo solicitado."""
+        axis = axis.upper()
+        if axis not in {"X", "Y", "Z"}:
+            raise ValueError("Eixo inválido. Use X, Y ou Z.")
+        line = self.position()
+        for token in line.split()[1:]:
+            name, raw = token.split("=", 1)
+            if name == axis:
+                return int(raw)
+        raise RuntimeError(f"Resposta POS sem posição do eixo {axis}: {line!r}")
 
     def position(self) -> str:
         return self.send("POS")
