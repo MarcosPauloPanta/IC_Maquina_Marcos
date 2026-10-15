@@ -1,9 +1,12 @@
+"""Extensão visual que substitui métodos da aba Análise para permitir rolagem. A lógica de movimento permanece em MainWindow."""
+
 from __future__ import annotations
 
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 
+## O QUE FAZ: Substitui os métodos visuais da aba Análise por versões com rolagem.
 def install_analysis_scroll(MainWindow):
     """Substitui apenas a montagem da aba Análise.
 
@@ -12,6 +15,7 @@ def install_analysis_scroll(MainWindow):
     e editados sem alterar o controlador ou o Arduino.
     """
 
+    ## O QUE FAZ: Monta os controles para criar e executar uma sequência de pontos de análise.
     def _analysis(self, p):
         ttk.Label(p, text="Análise por pontos", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         setup = ttk.LabelFrame(p, text=" Pontos ", padding=8)
@@ -49,6 +53,7 @@ def install_analysis_scroll(MainWindow):
         self.execute_button = ttk.Button(footer, text="EXECUTAR", command=self.execute_analysis, state="disabled")
         self.execute_button.pack(side="right")
 
+    ## O QUE FAZ: Cria uma entrada de coordenada X para cada ponto solicitado pelo operador.
     def create_point_fields(self):
         try:
             n = int(self.point_count_var.get())
