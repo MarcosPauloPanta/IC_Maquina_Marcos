@@ -1,3 +1,13 @@
+/*
+ * CÓPIA COMENTADA PARA ESTUDO — v0.1.0.
+ * O código executável é copiado da referência; as adições são comentários.
+ * Este é o sketch de teste do projeto. Não o grave na placa original sem
+ * confirmar explicitamente que se trata da placa de teste correta.
+ *
+ * ALERTA DE LEITURA: o firmware atual trata Z+ como descida, mas bloqueia
+ * esse sentido usando o botão superior A1. A GUI espera um contato de amostra,
+ * então a associação entre botão, sentido mecânico e status precisa ser validada.
+ */
 // ============================================================
 // CONTROLADOR DE MOTORES - CNC SHIELD V3 + A4988 + Arduino Uno
 // CONFIGURACAO ATUAL DO HARDWARE
@@ -86,46 +96,55 @@ long position_steps[3] = {0, 0, 0};
 bool drivers_enabled = false;
 String input_line;
 
+// ESTUDO: escolhe qual pino STEP corresponde ao eixo pedido.
 uint8_t stepPin(char axis) {
   if (axis == 'X') return X_STEP;
   if (axis == 'Y') return Y_STEP;
   return Z_STEP;
 }
 
+// ESTUDO: escolhe o pino DIR do eixo pedido.
 uint8_t dirPin(char axis) {
   if (axis == 'X') return X_DIR;
   if (axis == 'Y') return Y_DIR;
   return Z_DIR;
 }
 
+// ESTUDO: converte o nome X/Y/Z em índice para position_steps[].
 uint8_t axisIndex(char axis) {
   if (axis == 'X') return 0;
   if (axis == 'Y') return 1;
   return 2;
 }
 
+// ESTUDO: impede que um comando tente mover um eixo inexistente.
 bool validAxis(char axis) {
   return axis == 'X' || axis == 'Y' || axis == 'Z';
 }
 
+// ESTUDO: lê o botão superior usando o nível configurado em LIMIT_ACTIVE_LEVEL.
 bool zTopPressed() {
   return digitalRead(Z_TOP_BUTTON) == LIMIT_ACTIVE_LEVEL;
 }
 
+// ESTUDO: lê o botão inferior usando o nível configurado em LIMIT_ACTIVE_LEVEL.
 bool zBottomPressed() {
   return digitalRead(Z_BOTTOM_BUTTON) == LIMIT_ACTIVE_LEVEL;
 }
 
+// ESTUDO: limita a velocidade para evitar parâmetros fora da faixa aceita.
 bool validSpeed(long speed) {
   return speed >= 1 && speed <= 10000;
 }
 
+// ESTUDO: calcula o intervalo de tempo entre pulsos STEP.
 unsigned long intervalUs(unsigned long speed) {
   unsigned long value = 1000000UL / max(1UL, speed);
   if (value < STEP_PULSE_US + 2) value = STEP_PULSE_US + 2;
   return value;
 }
 
+// ESTUDO: coloca ENABLE em LOW e habilita os drivers A4988.
 void enableDrivers() {
   last_activity_ms = millis();
   if (drivers_enabled) return;
@@ -134,11 +153,13 @@ void enableDrivers() {
   delay(ENABLE_SETTLE_MS);
 }
 
+// ESTUDO: coloca ENABLE em HIGH para desabilitar os drivers quando o sistema fica ocioso.
 void disableDrivers() {
   digitalWrite(ENABLE_PIN, HIGH);
   drivers_enabled = false;
 }
 
+// ESTUDO: gera um pulso STEP com duração e intervalo definidos pela velocidade.
 void pulseStep(char axis, unsigned long speed) {
   unsigned long interval = intervalUs(speed);
   digitalWrite(stepPin(axis), HIGH);
@@ -148,6 +169,7 @@ void pulseStep(char axis, unsigned long speed) {
   if (rest > 0) delayMicroseconds(rest);
 }
 
+// ESTUDO: aplica limites de software a X/Y usando os contadores, não sensores físicos.
 bool softLimitBlocks(char axis, int direction) {
   if (axis != 'X' && axis != 'Y') return false;
   long pos = position_steps[axisIndex(axis)];
@@ -160,11 +182,13 @@ bool softLimitBlocks(char axis, int direction) {
 // Z+ = DESCIDA / Z- = SUBIDA.
 // Se o sentido mecanico do motor estiver invertido, altere SOMENTE
 // os dois niveis abaixo. Os botoes nao devem ser trocados por isso.
+// ESTUDO: ajusta o pino DIR antes do próximo pulso STEP.
 void setDirection(char axis, int direction) {
   digitalWrite(dirPin(axis), direction > 0 ? HIGH : LOW);
   delayMicroseconds(10);
 }
 
+// ESTUDO: escolhe qual botão bloqueia cada sentido lógico do Z.
 bool zLimitBlocks(int direction) {
   // Z+ = descida: botao de cima limita essa direcao.
   if (direction > 0) return zTopPressed();
@@ -173,18 +197,21 @@ bool zLimitBlocks(int direction) {
   return zBottomPressed();
 }
 
+// ESTUDO: muda o modo para IDLE e cancela a contagem restante.
 void stopMotion() {
   mode = IDLE;
   remaining_steps = 0;
   last_activity_ms = millis();
 }
 
+// ESTUDO: envia ao computador os contadores de passos no formato POS X=... Y=... Z=....
 void printPosition() {
   Serial.print(F("POS X=")); Serial.print(position_steps[0]);
   Serial.print(F(" Y=")); Serial.print(position_steps[1]);
   Serial.print(F(" Z=")); Serial.println(position_steps[2]);
 }
 
+// ESTUDO: envia estado lógico e leitura elétrica bruta dos dois botões.
 void printLimits() {
   Serial.print(F("LIMITS TOP="));
   Serial.print(zTopPressed() ? F("PRESSED") : F("FREE"));
@@ -194,6 +221,7 @@ void printLimits() {
   Serial.print(F(" RAW_BOTTOM=")); Serial.println(digitalRead(Z_BOTTOM_BUTTON));
 }
 
+// ESTUDO: valida e agenda um movimento finito de um eixo.
 void startMove(char axis, long signedSteps, unsigned long speed) {
   if (!validAxis(axis) || signedSteps == 0 || !validSpeed((long)speed)) {
     Serial.println(F("ERR BAD_MOVE")); return;
@@ -218,6 +246,7 @@ void startMove(char axis, long signedSteps, unsigned long speed) {
   Serial.println(F("ACK MOVE"));
 }
 
+// ESTUDO: inicia ou renova movimento contínuo protegido por JOG_TIMEOUT_MS.
 void startJog(char axis, int direction, unsigned long speed) {
   if (!validAxis(axis) || !validSpeed((long)speed) ||
       (direction != 1 && direction != -1)) {
@@ -249,6 +278,7 @@ void startJog(char axis, int direction, unsigned long speed) {
   Serial.println(F("ACK JOG"));
 }
 
+// ESTUDO: inicia descida Z limitada por passos e pelo botão superior conforme a lógica atual.
 void startZApproach(long downSteps, unsigned long speed, long retractSteps) {
   if (downSteps <= 0 || retractSteps <= 0 || !validSpeed((long)speed)) {
     Serial.println(F("ERR BAD_Z_APPROACH")); return;
@@ -269,6 +299,7 @@ void startZApproach(long downSteps, unsigned long speed, long retractSteps) {
   Serial.println(F("ACK Z_APPROACH"));
 }
 
+// ESTUDO: agenda uma subida finita do Z, se o botão inferior não estiver ativo.
 void startZRetract(long steps, unsigned long speed) {
   if (steps <= 0 || !validSpeed((long)speed)) {
     Serial.println(F("ERR BAD_Z_RETRACT")); return;
@@ -286,6 +317,7 @@ void startZRetract(long steps, unsigned long speed) {
   Serial.println(F("ACK Z_RETRACT"));
 }
 
+// ESTUDO: roda uma etapa do movimento ativo, checa limites, pulsa STEP e atualiza o contador.
 void executeMotion() {
   if (mode == IDLE) return;
 
@@ -333,12 +365,14 @@ void executeMotion() {
   }
 }
 
+// ESTUDO: zera o contador lógico de um eixo; não procura uma origem física.
 void zeroAxis(char axis) {
   if (axis == 'X') position_steps[0] = 0;
   else if (axis == 'Y') position_steps[1] = 0;
   else if (axis == 'Z') position_steps[2] = 0;
 }
 
+// ESTUDO: converte cada linha serial em uma ação do firmware.
 void handleCommand(String line) {
   line.trim();
   if (!line.length()) return;
@@ -430,6 +464,7 @@ void handleCommand(String line) {
   Serial.println(F("ERR UNKNOWN_COMMAND"));
 }
 
+// ESTUDO: acumula bytes até newline e encaminha comandos completos ao interpretador.
 void readSerial() {
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
@@ -447,6 +482,7 @@ void readSerial() {
   }
 }
 
+// ESTUDO: configura a pinagem, o estado inicial dos drivers e a comunicação serial.
 void setup() {
   pinMode(X_STEP, OUTPUT);
   pinMode(X_DIR, OUTPUT);
@@ -480,6 +516,7 @@ void setup() {
   Serial.println(F("Comandos: PING, STATUS, LIMITS, POS, MOVE, JOG_START, JOG_STOP, STOP, Z_APPROACH, Z_RETRACT"));
 }
 
+// ESTUDO: ciclo principal não bloqueante: recebe comandos, move um eixo e controla o desligamento ocioso.
 void loop() {
   readSerial();
   executeMotion();
