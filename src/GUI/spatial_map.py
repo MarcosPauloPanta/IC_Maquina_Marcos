@@ -107,9 +107,11 @@ class SpatialMap:
 
         self._geometry_changed()
 
+    ## O QUE FAZ: Ajusta a área rolável quando o tamanho do widget muda.
     def _resize_page(self, event):
         self.page_canvas.itemconfigure(self.page_window, width=event.width)
 
+    ## O QUE FAZ: Permite rolar o conteúdo do mapa com a roda do mouse.
     def _scroll_page(self, event):
         try:
             widget = event.widget
@@ -122,6 +124,7 @@ class SpatialMap:
             pass
 
     @property
+    ## O QUE FAZ: Retorna o tamanho físico atual do corpo de prova configurado na interface.
     def size_mm(self) -> float:
         try:
             value = float(self.size_var.get().replace(",", "."))
@@ -131,6 +134,7 @@ class SpatialMap:
         except ValueError:
             return self.DEFAULT_SIZE_MM
 
+    ## O QUE FAZ: Reage à troca de geometria do corpo de prova e redesenha o mapa.
     def _geometry_changed(self):
         value = self.size_mm
         self.size_var.set(f"{value:.3f}")
@@ -138,11 +142,13 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
+    ## O QUE FAZ: Atualiza o nível de zoom e redesenha os elementos.
     def _zoom_changed(self, _value=None):
         zoom = max(0.75, min(8.0, float(self.zoom_var.get())))
         self.zoom_value_label.configure(text=f"{zoom:.2f}×")
         self._draw()
 
+    ## O QUE FAZ: Calcula dimensões e margens do desenho dentro do Canvas.
     def _content_geometry(self):
         zoom = max(0.75, min(8.0, float(self.zoom_var.get())))
         sample_px = self.base_sample_px * zoom
@@ -155,17 +161,21 @@ class SpatialMap:
         scale = sample_px / self.size_mm
         return content_w, content_h, cx, cy, radius_px, scale
 
+    ## O QUE FAZ: Retorna a geometria selecionada e os parâmetros necessários ao desenho.
     def _geometry(self):
         return self._content_geometry()[2:]
 
+    ## O QUE FAZ: Converte coordenadas físicas em milímetros para coordenadas de pixels.
     def _mm_to_px(self, x, y):
         cx, cy, _, scale = self._geometry()
         return cx + x * scale, cy - y * scale
 
+    ## O QUE FAZ: Converte coordenadas de pixels para milímetros.
     def _px_to_mm(self, px, py):
         cx, cy, _, scale = self._geometry()
         return (px - cx) / scale, (cy - py) / scale
 
+    ## O QUE FAZ: Traduz a posição de um evento do mouse para o sistema de coordenadas do Canvas.
     def _canvas_point(self, event):
         """Converte coordenada do mouse (viewport) em coordenada do canvas.
 
@@ -175,15 +185,18 @@ class SpatialMap:
         """
         return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
 
+    ## O QUE FAZ: Verifica se uma coordenada física está dentro do corpo de prova.
     def _inside_sample(self, x, y):
         half = self._half_size_mm()
         if self.shape_var.get() == "Círculo":
             return math.hypot(x, y) <= half
         return abs(x) <= half and abs(y) <= half
 
+    ## O QUE FAZ: Calcula metade da dimensão usada para testar os limites da amostra.
     def _half_size_mm(self):
         return self.size_mm / 2.0
 
+    ## O QUE FAZ: Procura o ponto desenhado mais próximo da posição clicada.
     def _point_at(self, px, py):
         for index, point in reversed(list(enumerate(self.points))):
             point_x, point_y = self._mm_to_px(point["x"], point["y"])
@@ -191,6 +204,7 @@ class SpatialMap:
                 return index
         return None
 
+    ## O QUE FAZ: Adiciona um ponto ou seleciona um ponto existente, conforme a posição do clique.
     def _on_left_click(self, event):
         px, py = self._canvas_point(event)
         existing = self._point_at(px, py)
@@ -207,6 +221,7 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
+    ## O QUE FAZ: Trata clique direito para remover ou interagir com pontos conforme a implementação.
     def _on_right_click(self, event):
         px, py = self._canvas_point(event)
         index = self._point_at(px, py)
@@ -216,6 +231,7 @@ class SpatialMap:
             return
         self._delete_index(index)
 
+    ## O QUE FAZ: Remove da lista o ponto identificado pelo índice e atualiza a interface.
     def _delete_index(self, index):
         del self.points[index]
         if not self.points:
@@ -225,11 +241,13 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
+    ## O QUE FAZ: Seleciona um ponto e destaca a linha correspondente na lista.
     def _select(self, index):
         self.selected_index = index
         self._refresh_rows()
         self._draw()
 
+    ## O QUE FAZ: Lê as coordenadas editadas na lista e atualiza o ponto selecionado.
     def _save_row(self, index, x_var, y_var):
         try:
             x = float(x_var.get().replace(",", "."))
@@ -245,6 +263,7 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
+    ## O QUE FAZ: Reconstrói as linhas editáveis que mostram as coordenadas dos pontos.
     def _refresh_rows(self):
         if not hasattr(self, "points_rows"):
             return
@@ -265,6 +284,7 @@ class SpatialMap:
             tk.Button(row, text="🗑", width=2, relief="flat", command=lambda i=index: self._delete_index(i)).pack(side="left", padx=1)
         self.count_var.set(f"{len(self.points)} ponto{'s' if len(self.points) != 1 else ''}")
 
+    ## O QUE FAZ: Controla a rolagem da lista de pontos.
     def _scroll_points(self, event):
         self.points_canvas.yview_scroll(int(-event.delta / 120), "units")
 
@@ -275,6 +295,7 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
+    ## O QUE FAZ: Limpa e redesenha o corpo de prova, pontos e destaques.
     def _draw(self):
         if not hasattr(self, "canvas"):
             return
@@ -298,5 +319,6 @@ class SpatialMap:
             self.canvas.create_oval(px - r, py - r, px + r, py + r, fill=colors["danger"], outline=colors["text"] if selected else colors["danger"], width=2 if selected else 1)
             self.canvas.create_text(px + 10, py - 10, text=str(i), fill=colors["text"], font=("Segoe UI", 9, "bold"))
 
+    ## O QUE FAZ: Atualiza as cores do mapa depois de alternar tema.
     def refresh_theme(self):
         self._draw()
