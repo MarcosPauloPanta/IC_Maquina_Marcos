@@ -1,3 +1,9 @@
+/*
+ * CÓPIA COMENTADA PARA ESTUDO — v0.1.0.
+ * Este arquivo histórico não tem extensão .ino, mas contém um sketch Arduino.
+ * Os comentários descrevem a lógica existente; não o trate como firmware ativo
+ * nem o grave na placa original sem verificar qual versão está em uso.
+ */
 // ============================================================
 // CONTROLADOR DE MOTORES - CNC SHIELD V3 + A4988 + ARDUINO UNO
 // ============================================================
@@ -101,24 +107,28 @@ void printLimits() {
 // PINOS / VALIDACAO
 // ------------------------------------------------------------
 
+// ESTUDO: escolhe o pino STEP correspondente ao eixo.
 uint8_t stepPin(char axis) {
   if (axis == 'X') return X_STEP;
   if (axis == 'Y') return Y_STEP;
   return Z_STEP;
 }
 
+// ESTUDO: escolhe o pino DIR correspondente ao eixo.
 uint8_t dirPin(char axis) {
   if (axis == 'X') return X_DIR;
   if (axis == 'Y') return Y_DIR;
   return Z_DIR;
 }
 
+// ESTUDO: converte o eixo X/Y/Z em índice do contador de posições.
 uint8_t axisIndex(char axis) {
   if (axis == 'X') return 0;
   if (axis == 'Y') return 1;
   return 2;
 }
 
+// ESTUDO: valida o nome do eixo recebido por serial.
 bool validAxis(char axis) {
   return axis == 'X' || axis == 'Y' || axis == 'Z';
 }
@@ -211,6 +221,7 @@ bool directionBlocked(char axis, int direction) {
 // PARADA
 // ------------------------------------------------------------
 
+// ESTUDO: interrompe o movimento atual e volta ao estado parado.
 void stopMotion() {
   mode = IDLE;
   remainingSteps = 0;
@@ -240,6 +251,7 @@ void zeroAxis(char axis) {
 // MOVE FINITO
 // ------------------------------------------------------------
 
+// ESTUDO: valida e agenda um movimento finito de um eixo.
 void startMove(char axis, long signedSteps, unsigned long speed) {
   if (!validAxis(axis) || signedSteps == 0 || !validSpeed(speed)) {
     Serial.println(F("ERR BAD_MOVE"));
@@ -275,6 +287,7 @@ void startMove(char axis, long signedSteps, unsigned long speed) {
 // JOG CONTINUO
 // ------------------------------------------------------------
 
+// ESTUDO: inicia movimento contínuo, renovado pela GUI e protegido por timeout.
 void startJog(char axis, int direction, unsigned long speed) {
   if (!validAxis(axis) || !validSpeed(speed) || (direction != -1 && direction != 1)) {
     Serial.println(F("ERR BAD_JOG"));
@@ -313,6 +326,7 @@ void startJog(char axis, int direction, unsigned long speed) {
 // Z EXPLICITO
 // ------------------------------------------------------------
 
+// ESTUDO: inicia a descida do Z até um limite ou número máximo de passos.
 void startZDown(long steps, unsigned long speed) {
   if (steps <= 0 || !validSpeed(speed)) {
     Serial.println(F("ERR BAD_Z_DOWN"));
@@ -337,6 +351,7 @@ void startZDown(long steps, unsigned long speed) {
   Serial.println(F("ACK Z_DOWN"));
 }
 
+// ESTUDO: inicia a subida do Z por uma quantidade finita de passos.
 void startZUp(long steps, unsigned long speed) {
   if (steps <= 0 || !validSpeed(speed)) {
     Serial.println(F("ERR BAD_Z_UP"));
@@ -374,6 +389,7 @@ void startZRetract(long steps, unsigned long speed) {
 // EXECUCAO
 // ------------------------------------------------------------
 
+// ESTUDO: gera pulsos e atualiza a posição, verificando limites e conclusão.
 void executeMotion() {
   if (mode == IDLE) return;
 
@@ -415,6 +431,7 @@ void executeMotion() {
 // COMANDOS
 // ------------------------------------------------------------
 
+// ESTUDO: interpreta cada comando serial e encaminha para a função correspondente.
 void handleCommand(String line) {
   line.trim();
   if (!line.length()) return;
@@ -550,6 +567,7 @@ void handleCommand(String line) {
 // SETUP / LOOP
 // ------------------------------------------------------------
 
+// ESTUDO: configura os pinos e inicia a comunicação serial.
 void setup() {
   pinMode(X_STEP, OUTPUT);
   pinMode(X_DIR, OUTPUT);
@@ -573,6 +591,7 @@ void setup() {
   Serial.println(F("READY"));
 }
 
+// ESTUDO: ciclo principal: recebe comandos, executa movimento e desliga drivers ociosos.
 void loop() {
   while (Serial.available()) {
     char c = Serial.read();
