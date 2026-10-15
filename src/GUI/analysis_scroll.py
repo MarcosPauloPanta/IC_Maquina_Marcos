@@ -14,6 +14,7 @@ def install_analysis_scroll(MainWindow):
 
     def _analysis(self, p):
         ttk.Label(p, text="Análise por pontos", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(p, text="Velocidade fixa da análise: 500 steps/s nos eixos X e Z.").pack(anchor="w", pady=(4, 0))
         setup = ttk.LabelFrame(p, text=" Pontos ", padding=8)
         setup.pack(fill="x", pady=13)
         ttk.Label(setup, text="Quantidade:", font=("Segoe UI", 10)).pack(side="left", padx=12)
