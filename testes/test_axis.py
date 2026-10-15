@@ -3,6 +3,7 @@
 from src.controller.axis import Axis
 
 
+## O QUE FAZ: Cria um objeto Axis com parâmetros de teste para reutilizar nos testes.
 def criar_eixo():
     return Axis(
         steps_per_revolution=200,
@@ -11,6 +12,7 @@ def criar_eixo():
     )
 
 
+## O QUE FAZ: Confere a conversão e a direção de um movimento para X positivo.
 def test_movimento_positivo():
     axis = criar_eixo()
 
@@ -22,6 +24,7 @@ def test_movimento_positivo():
     assert resultado["theoretical_position_mm"] == 10
 
 
+## O QUE FAZ: Confere que um alvo menor gera direção negativa e passos adequados.
 def test_movimento_negativo():
     axis = criar_eixo()
     axis.current_position_mm = 10
@@ -34,6 +37,7 @@ def test_movimento_negativo():
     assert resultado["theoretical_position_mm"] == 5
 
 
+## O QUE FAZ: Confere o caso em que o alvo coincide com a posição atual.
 def test_eixo_parado():
     axis = criar_eixo()
     axis.current_position_mm = 10
@@ -46,6 +50,7 @@ def test_eixo_parado():
     assert resultado["theoretical_position_mm"] == 10
 
 
+## O QUE FAZ: Confere o cálculo para um alvo abaixo de zero.
 def test_movimento_para_posicao_negativa():
     axis = criar_eixo()
 
@@ -57,6 +62,7 @@ def test_movimento_para_posicao_negativa():
     assert resultado["theoretical_position_mm"] == -5
 
 
+## O QUE FAZ: Confere que move_to atualiza a posição lógica prevista.
 def test_movimento_atualiza_posicao():
     axis = criar_eixo()
 
@@ -66,6 +72,7 @@ def test_movimento_atualiza_posicao():
     assert axis.current_position_mm == 10
 
 
+## O QUE FAZ: Confere vários movimentos sucessivos usando a posição lógica atualizada.
 def test_sequencia_de_movimentos():
     axis = criar_eixo()
 
