@@ -276,17 +276,25 @@ class MainWindow:
                 steps = -round((target - current) * self.machine.x.microsteps_per_mm)
                 if steps:
                     self.arduino.move_steps("X", steps, 500)
-                # O Z só deve esperar e subir depois que o botão confirmar contato.
-                # MAX_STEPS significa que a descida terminou sem confirmar o botão.
+                # A chegada pode ocorrer de duas formas:
+                # 1) o Z completa a descida em milimetros programada (MAX_STEPS);
+                # 2) um dos botoes e acionado antes da distancia terminar.
+                # Nos dois casos, a permanencia individual comeca neste ponto.
                 contact_result = self.arduino.z_approach(down, speed, retract)
-                if "LIMIT" not in contact_result:
+                valid_arrivals = (
+                    "Z_APPROACH_READY MAX_STEPS",
+                    "Z_APPROACH_READY LIMIT_TOP",
+                    "Z_APPROACH_READY LIMIT_BOTTOM",
+                    "Z_APPROACH_READY LIMIT",
+                )
+                if not any(contact_result.startswith(reason) for reason in valid_arrivals):
                     raise RuntimeError(
-                        "O Z atingiu a quantidade máxima de passos sem confirmar "
-                        "o botão. A subida automática não foi iniciada. "
-                        f"Resposta do Arduino: {contact_result}"
+                        "O Arduino nao confirmou uma chegada valida do eixo Z. "
+                        "A subida automatica nao foi iniciada. "
+                        f"Resposta: {contact_result}"
                     )
 
-                # A permanência individual é contada após a confirmação de contato.
+                # A permanencia individual comeca depois da distancia ou do botao.
                 time.sleep(dwell_times[i - 1])
 
                 # Depois da espera, o Z sobe pela distância configurada.
