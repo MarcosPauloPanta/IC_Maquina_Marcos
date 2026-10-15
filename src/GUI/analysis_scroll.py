@@ -41,6 +41,7 @@ def install_analysis_scroll(MainWindow):
         header.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         ttk.Label(header, text="Ponto", font=("Segoe UI", 10, "bold"), width=12).grid(row=0, column=0)
         ttk.Label(header, text="X (mm)", font=("Segoe UI", 10, "bold"), width=16).grid(row=0, column=1)
+        ttk.Label(header, text="Permanência (s)", font=("Segoe UI", 10, "bold"), width=18).grid(row=0, column=2)
         self.point_scroll_frame.columnconfigure(0, weight=1)
 
         footer = ttk.Frame(p)
@@ -63,11 +64,20 @@ def install_analysis_scroll(MainWindow):
                 widget.destroy()
 
         self.point_entries = []
+        self.point_dwell_entries = []
+        # Cada ponto herda o tempo-base da aba Calibração no momento da criação.
+        base_dwell = self.z_dwell_s_var.get()
         for row in range(1, n + 1):
             ttk.Label(self.point_scroll_frame, text=f"Ponto {row}", width=12).grid(row=row, column=0, pady=5, padx=5)
-            entry = tk.Entry(self.point_scroll_frame, width=16, justify="center", font=("Segoe UI", 10))
-            entry.grid(row=row, column=1, pady=5, padx=5)
-            self.point_entries.append(entry)
+
+            x_entry = tk.Entry(self.point_scroll_frame, width=16, justify="center", font=("Segoe UI", 10))
+            x_entry.grid(row=row, column=1, pady=5, padx=5)
+            self.point_entries.append(x_entry)
+
+            dwell_entry = tk.Entry(self.point_scroll_frame, width=18, justify="center", font=("Segoe UI", 10))
+            dwell_entry.grid(row=row, column=2, pady=5, padx=5)
+            dwell_entry.insert(0, base_dwell)
+            self.point_dwell_entries.append(dwell_entry)
 
         if self.point_entries:
             self.point_entries[0].focus_set()
