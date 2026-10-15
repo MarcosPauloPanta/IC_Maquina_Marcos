@@ -172,10 +172,11 @@ class ArduinoController:
             raise RuntimeError(result)
 
     def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> str:
-        """Desce o Z e devolve o motivo informado pelo Arduino.
+        """Desce o Z e devolve o motivo de chegada informado pelo Arduino.
 
-        A GUI usa esse retorno para distinguir o acionamento do botão
-        (LIMIT) do fim da quantidade máxima de passos (MAX_STEPS).
+        LIMIT_TOP/LIMIT_BOTTOM significam que um botao confirmou a chegada.
+        MAX_STEPS significa que a distancia programada foi completada.
+        Ambos sao resultados validos para iniciar a permanencia e depois subir.
         """
         if steps <= 0 or speed_steps_s <= 0 or retract_steps <= 0:
             raise ValueError("Parâmetros do Z inválidos.")

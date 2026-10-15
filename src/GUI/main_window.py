@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from pathlib import Path
@@ -17,6 +18,9 @@ CONFIG_FILE = Path("calibration.json")
 
 
 class MainWindow:
+    # Velocidade fixa para toda a sequência automática de análise.
+    ANALYSIS_SPEED_STEPS_S = 500
+
     LIGHT = {"bg": "#F4F4F1", "panel": "#FFFFFF", "field": "#E4E4DF", "text": "#181818", "accent": "#74451F", "border": "#A9A9A2", "danger": "#A51D2D"}
     DARK = {"bg": "#141516", "panel": "#1D1F21", "field": "#25282B", "text": "#F5F5F2", "accent": "#E24A55", "border": "#464A4F", "danger": "#E04450"}
 
@@ -53,8 +57,9 @@ class MainWindow:
         self.position_vars = {a: tk.StringVar(value="0.000 mm") for a in "XYZ"}
         self.calibration_vars = {a: tk.StringVar() for a in "XYZ"}
         self.point_entries = []
+        self.point_dwell_entries = []
         self.z_down_mm_var = tk.StringVar(value="1.000")
-        self.z_speed_var = tk.StringVar(value="200")
+        self.z_speed_var = tk.StringVar(value="500")
         self.z_retract_mm_var = tk.StringVar(value="1.000")
         self.z_dwell_s_var = tk.StringVar(value="1.000")
         self.cal_move_steps_var = tk.StringVar(value="1000")
@@ -179,6 +184,7 @@ class MainWindow:
 
     def _analysis(self, p):
         ttk.Label(p, text="Análise por pontos", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(p, text="Velocidade fixa da análise: 500 steps/s nos eixos X e Z.").pack(anchor="w", pady=(4, 0))
         setup = ttk.LabelFrame(p, text=" Pontos ", padding=8)
         setup.pack(fill="x", pady=13)
         ttk.Label(setup, text="Quantidade:", font=("Segoe UI", 10)).pack(side="left", padx=12)
@@ -219,19 +225,49 @@ class MainWindow:
         self.execute_button.configure(state="normal")
 
     def clear_points(self):
-        for e in self.point_entries:
-            e.destroy()
+        # Remove também os rótulos "Ponto N", não apenas os campos editáveis.
+        # A tabela pode ser a versão rolável (run_gui.py) ou a versão interna.
+        if hasattr(self, "point_scroll_frame"):
+            for widget in self.point_scroll_frame.winfo_children():
+                if widget.grid_info().get("row") != "0":
+                    widget.destroy()
+        elif hasattr(self, "point_table"):
+            for widget in self.point_table.winfo_children():
+                try:
+                    if int(widget.grid_info().get("row", 0)) > 0:
+                        widget.destroy()
+                except (ValueError, tk.TclError):
+                    pass
         self.point_entries = []
+        self.point_dwell_entries = []
         self.sequence.clear()
         self.sequence_status_var.set("Nenhum ponto definido.")
         self.execute_button.configure(state="disabled")
 
     def execute_analysis(self):
+        # Captura todos os valores antes de iniciar a thread; mudanças na GUI
+        # durante a execução não alteram a sequência que já foi validada.
+        # Se o tempo-base da aba Calibração mudou depois de criar os pontos,
+        # atualiza somente os campos que ainda conservam o valor-base anterior.
+        current_base_dwell = self.z_dwell_s_var.get().strip()
+        previous_base_dwell = getattr(self, "point_dwell_default", current_base_dwell)
+        for entry in self.point_dwell_entries:
+            if entry.get().strip() == previous_base_dwell:
+                entry.delete(0, tk.END)
+                entry.insert(0, current_base_dwell)
+        self.point_dwell_default = current_base_dwell
         try:
-            points = [float(e.get().replace(",", ".")) for e in self.point_entries]
-            assert points
-        except (ValueError, AssertionError):
-            messagebox.showerror("Pontos", "Todos os X precisam conter números.")
+            points = [float(e.get().strip().replace(",", ".")) for e in self.point_entries]
+            dwell_times = [float(e.get().strip().replace(",", ".")) for e in self.point_dwell_entries]
+            if not points or len(points) != len(dwell_times):
+                raise ValueError
+            if not all(math.isfinite(x) for x in points):
+                raise ValueError("As posições X precisam ser números finitos.")
+            if not all(math.isfinite(t) and t >= 0 for t in dwell_times):
+                raise ValueError("Cada permanência deve ser um número finito maior ou igual a zero.")
+        except ValueError as exc:
+            detail = str(exc) or "Preencha todos os X e tempos de permanência com números válidos."
+            messagebox.showerror("Pontos", detail)
             return
         if not self.arduino or not self.arduino.is_connected:
             messagebox.showwarning("Análise", "Conecte o Arduino.")
@@ -241,34 +277,58 @@ class MainWindow:
         self.sequence.set_points(points)
         self.analysis_running = True
         self.execute_button.configure(state="disabled")
-        threading.Thread(target=self._analysis_worker, args=(points,), daemon=True).start()
+        threading.Thread(target=self._analysis_worker, args=(points, dwell_times), daemon=True).start()
 
-    def _analysis_worker(self, points):
+    def _analysis_worker(self, points, dwell_times):
         try:
             current = self.machine.x.current_position_mm
             down = round(float(self.z_down_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
             retract = round(float(self.z_retract_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
-            speed = int(self.z_speed_var.get())
-            dwell = float(self.z_dwell_s_var.get().replace(",", "."))
+            # A análise usa 500 steps/s em todos os movimentos X e Z,
+            # independentemente da velocidade configurada para JOG/calibração.
+            speed = self.ANALYSIS_SPEED_STEPS_S
             for i, target in enumerate(points, 1):
                 steps = -round((target - current) * self.machine.x.microsteps_per_mm)
                 if steps:
-                    self.arduino.move_steps("X", steps, 500)
-                # O Z só deve esperar e subir depois que o botão confirmar contato.
-                # MAX_STEPS significa que a descida terminou sem confirmar o botão.
+                    self.arduino.move_steps("X", steps, self.ANALYSIS_SPEED_STEPS_S)
+                # A chegada pode ocorrer de duas formas:
+                # 1) o Z completa a descida em milimetros programada (MAX_STEPS);
+                # 2) um dos botoes e acionado antes da distancia terminar.
+                # Nos dois casos, a permanencia individual comeca neste ponto.
                 contact_result = self.arduino.z_approach(down, speed, retract)
-                if "LIMIT" not in contact_result:
+                valid_arrivals = (
+                    "Z_APPROACH_READY MAX_STEPS",
+                    "Z_APPROACH_READY LIMIT_TOP",
+                    "Z_APPROACH_READY LIMIT_BOTTOM",
+                    "Z_APPROACH_READY LIMIT",
+                )
+                if not any(contact_result.startswith(reason) for reason in valid_arrivals):
                     raise RuntimeError(
-                        "O Z atingiu a quantidade máxima de passos sem confirmar "
-                        "o botão. A subida automática não foi iniciada. "
-                        f"Resposta do Arduino: {contact_result}"
+                        "O Arduino nao confirmou uma chegada valida do eixo Z. "
+                        "A subida automatica nao foi iniciada. "
+                        f"Resposta: {contact_result}"
                     )
 
-                # A permanência é contada depois que o botão foi acionado.
-                time.sleep(dwell)
+                # A permanencia individual comeca depois da distancia ou do botao.
+                # O status deixa visivel o tempo efetivamente aguardado em cada ponto.
+                dwell_s = dwell_times[i - 1]
+                self.root.after(
+                    0,
+                    lambda i=i, dwell_s=dwell_s: self.log_var.set(
+                        f"Ponto {i}: permanência de {dwell_s:g} s."
+                    ),
+                )
+                # Espera bloqueante nesta thread de trabalho: nenhum ponto seguinte
+                # pode começar antes de terminar o tempo de permanência.
+                deadline = time.monotonic() + dwell_s
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(remaining, 0.1))
 
                 # Depois da espera, o Z sobe pela distância configurada.
-                self.arduino.z_retract(retract, speed)
+                self.arduino.z_retract(retract, self.ANALYSIS_SPEED_STEPS_S)
                 self._apply_position_line(self.arduino.position())
                 current = target
                 self.root.after(0, lambda i=i, n=len(points): self._progress(i, n))
