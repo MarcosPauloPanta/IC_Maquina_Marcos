@@ -1,3 +1,5 @@
+"""Testes automatizados da classe Machine. Eles verificam o modelo lógico, não o hardware."""
+
 from src.controller.axis import Axis
 from src.controller.machine import Machine
 
