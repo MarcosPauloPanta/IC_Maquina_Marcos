@@ -183,6 +183,14 @@ class ArduinoController:
         self._clear_rx_queue()
         self.send_nowait(f"Z_APPROACH {int(steps)} {int(speed_steps_s)} {int(retract_steps)}")
         result = self.wait_for_motion(ready_prefix="Z_APPROACH_READY")
+
+        # Se o firmware retornar LIMIT simples ao tocar o fim inferior,
+        # o movimento já foi interrompido. Trate isso como contato de análise
+        # para que a sequência continue com a permanência e o recuo do Z,
+        # em vez de abortar a análise. A proteção física continua ativa.
+        if result == "LIMIT":
+            return "Z_APPROACH_READY LIMIT_BOTTOM"
+
         if not result.startswith("Z_APPROACH_READY"):
             raise RuntimeError(result)
         return result
