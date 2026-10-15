@@ -1,3 +1,5 @@
+"""Testes automatizados do modelo matemático Axis. Eles validam contas, não o deslocamento físico do motor."""
+
 from src.controller.axis import Axis
 
 
