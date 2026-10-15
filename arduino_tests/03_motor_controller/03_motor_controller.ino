@@ -1,3 +1,6 @@
+/* CÓPIA COMENTADA PARA ESTUDO — v0.1.0.
+ * Foram acrescentados comentários; não altere os comandos executáveis sem testar.
+ */
 // ============================================================
 // TESTE 03 — CONTROLADOR DE MOTORES DA MÁQUINA
 // CNC Shield V3 + A4988 + Arduino Uno
@@ -179,6 +182,7 @@ void stopMotion() {
 // MOVIMENTO NORMAL — MOVE
 // ============================================================
 
+// ESTUDO: valida e agenda um movimento finito em um eixo, sem fazer um while longo que bloquearia STOP.
 void startMove(char axis, int direction, long steps) {
   // Validação básica do comando.
   if (!validAxis(axis) || steps <= 0 || (direction != 1 && direction != -1)) {
@@ -215,6 +219,7 @@ void startMove(char axis, int direction, long steps) {
 // ------------------------------------------------------------
 // Executa o movimento sem bloquear o loop inteiro.
 // ------------------------------------------------------------
+// ESTUDO: gera os pulsos e atualiza o contador, verificando STOP e limites em cada ciclo.
 void executeMotion() {
   if (!moving) {
     return;
@@ -256,6 +261,7 @@ void executeMotion() {
 // usuário mandar STOP ou um limite for atingido.
 // ============================================================
 
+// ESTUDO: agenda movimento contínuo com timeout; a GUI precisa renovar o comando enquanto o botão fica pressionado.
 void startJog(char axis, int direction) {
   if (!validAxis(axis) || (direction != 1 && direction != -1)) {
     Serial.println("ERR BAD_JOG");
@@ -361,6 +367,7 @@ void seekZDown() {
 // INTERPRETADOR DE COMANDOS
 // ============================================================
 
+// ESTUDO: transforma comandos seriais como PING, MOVE, JOG e STOP em ações do firmware.
 void handleCommand(String command) {
   command.trim();
   command.toUpperCase();
@@ -436,6 +443,7 @@ void handleCommand(String command) {
 // SETUP
 // ============================================================
 
+// ESTUDO: configura os pinos STEP/DIR, ENABLE, botões e serial antes de qualquer movimento.
 void setup() {
   // Pinos dos motores como saída.
   pinMode(X_STEP, OUTPUT);
@@ -473,6 +481,7 @@ void setup() {
 // LOOP PRINCIPAL
 // ============================================================
 
+// ESTUDO: lê comandos e executa incrementalmente o movimento ativo; os estados impedem movimentos concorrentes.
 void loop() {
   // Primeiro verificamos se o computador enviou um comando.
   if (Serial.available()) {
