@@ -67,7 +67,9 @@ def install_analysis_scroll(MainWindow):
         self.point_entries = []
         self.point_dwell_entries = []
         # Cada ponto herda o tempo-base da aba Calibração no momento da criação.
+        # Campos que não forem personalizados acompanham mudanças posteriores no tempo-base.
         base_dwell = self.z_dwell_s_var.get()
+        self.point_dwell_default = base_dwell
         for row in range(1, n + 1):
             ttk.Label(self.point_scroll_frame, text=f"Ponto {row}", width=12).grid(row=row, column=0, pady=5, padx=5)
 
