@@ -247,6 +247,15 @@ class MainWindow:
     def execute_analysis(self):
         # Captura todos os valores antes de iniciar a thread; mudanças na GUI
         # durante a execução não alteram a sequência que já foi validada.
+        # Se o tempo-base da aba Calibração mudou depois de criar os pontos,
+        # atualiza somente os campos que ainda conservam o valor-base anterior.
+        current_base_dwell = self.z_dwell_s_var.get().strip()
+        previous_base_dwell = getattr(self, "point_dwell_default", current_base_dwell)
+        for entry in self.point_dwell_entries:
+            if entry.get().strip() == previous_base_dwell:
+                entry.delete(0, tk.END)
+                entry.insert(0, current_base_dwell)
+        self.point_dwell_default = current_base_dwell
         try:
             points = [float(e.get().strip().replace(",", ".")) for e in self.point_entries]
             dwell_times = [float(e.get().strip().replace(",", ".")) for e in self.point_dwell_entries]
