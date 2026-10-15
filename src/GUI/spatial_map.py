@@ -1,3 +1,5 @@
+"""Mapa 2D para visualizar e editar coordenadas. Os pontos deste mapa não são, nesta versão, automaticamente convertidos na sequência de movimento."""
+
 from __future__ import annotations
 
 import math
@@ -5,11 +7,13 @@ import tkinter as tk
 from tkinter import ttk
 
 
+## O QUE FAZ: Desenha e permite editar pontos num mapa 2D do corpo de prova.
 class SpatialMap:
     """Mapa 2D do corpo de prova. Nenhum clique aqui movimenta a máquina."""
 
     DEFAULT_SIZE_MM = 35.74
 
+    ## O QUE FAZ: Guarda os parâmetros do eixo e prepara sua posição lógica inicial.
     def __init__(self, parent, colors_getter):
         self.parent = parent
         self.colors_getter = colors_getter
@@ -264,6 +268,7 @@ class SpatialMap:
     def _scroll_points(self, event):
         self.points_canvas.yview_scroll(int(-event.delta / 120), "units")
 
+    ## O QUE FAZ: Esvazia a lista e reinicia o estado da sequência.
     def clear(self):
         self.points.clear()
         self.selected_index = None
