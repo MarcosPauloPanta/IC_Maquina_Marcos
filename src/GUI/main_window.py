@@ -221,9 +221,19 @@ class MainWindow:
         self.execute_button.configure(state="normal")
 
     def clear_points(self):
-        # Os campos de X e de permanência pertencem à mesma tabela de pontos.
-        for e in self.point_entries + self.point_dwell_entries:
-            e.destroy()
+        # Remove também os rótulos "Ponto N", não apenas os campos editáveis.
+        # A tabela pode ser a versão rolável (run_gui.py) ou a versão interna.
+        if hasattr(self, "point_scroll_frame"):
+            for widget in self.point_scroll_frame.winfo_children():
+                if widget.grid_info().get("row") != "0":
+                    widget.destroy()
+        elif hasattr(self, "point_table"):
+            for widget in self.point_table.winfo_children():
+                try:
+                    if int(widget.grid_info().get("row", 0)) > 0:
+                        widget.destroy()
+                except (ValueError, tk.TclError):
+                    pass
         self.point_entries = []
         self.point_dwell_entries = []
         self.sequence.clear()
