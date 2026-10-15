@@ -1,3 +1,5 @@
+"""Utilitário de diagnóstico para listar portas seriais detectadas no computador."""
+
 import serial.tools.list_ports
 
 
