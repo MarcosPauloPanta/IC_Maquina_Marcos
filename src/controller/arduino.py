@@ -77,6 +77,7 @@ class ArduinoController:
                 self._serial = None
             self._clear_rx_queue()
 
+    ## O QUE FAZ: Descarta mensagens antigas da fila de recepção antes de uma operação síncrona.
     def _clear_rx_queue(self) -> None:
         while True:
             try:
@@ -166,6 +167,7 @@ class ArduinoController:
         if self.is_connected:
             self.send_nowait("JOG_STOP")
 
+    ## O QUE FAZ: Atalho para enviar o comando JOG legado do protocolo de teste.
     def jog(self, axis: str, direction: int) -> None:
         self.jog_start(axis, direction, 200)
 
