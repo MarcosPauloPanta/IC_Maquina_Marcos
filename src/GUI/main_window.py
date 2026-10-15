@@ -1,3 +1,5 @@
+"""Interface principal. Este arquivo é uma cópia comentada: foram acrescentados comentários/docstrings, sem intenção de alterar a lógica executável. A posição mostrada é estimada por contagem de passos."""
+
 from __future__ import annotations
 
 import json
@@ -16,10 +18,12 @@ from src.GUI.spatial_map import SpatialMap
 CONFIG_FILE = Path("calibration.json")
 
 
+## O QUE FAZ: Coordena a interface gráfica, o modelo lógico dos eixos e os comandos enviados ao Arduino.
 class MainWindow:
     LIGHT = {"bg": "#F4F4F1", "panel": "#FFFFFF", "field": "#E4E4DF", "text": "#181818", "accent": "#74451F", "border": "#A9A9A2", "danger": "#A51D2D"}
     DARK = {"bg": "#141516", "panel": "#1D1F21", "field": "#25282B", "text": "#F5F5F2", "accent": "#E24A55", "border": "#464A4F", "danger": "#E04450"}
 
+    ## O QUE FAZ: Guarda os parâmetros do eixo e prepara sua posição lógica inicial.
     def __init__(self, root):
         self.root = root
         self.root.title("Máquina de Análise")
@@ -32,7 +36,9 @@ class MainWindow:
         except tk.TclError:
             pass
         self.arduino = None
-        self.machine = Machine(Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400))
+                ## Modelo inicial dos eixos. 400 passos/mm é um valor provisório, não uma calibração física confirmada.
+        ## O fator 400 passos/mm é inicial; deve ser substituído por calibração medida.
+self.machine = Machine(Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400))
         self.sequence = PointSequence()
         self.dark_mode = False
         self.analysis_running = False
@@ -65,8 +71,10 @@ class MainWindow:
         self._build()
         self._apply_theme()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
-        self.root.after(100, self._poll_serial)
+                ## Agenda a leitura serial periódica sem bloquear o loop de eventos da interface.
+self.root.after(100, self._poll_serial)
 
+    ## O QUE FAZ: Cria uma aba com conteúdo rolável, útil quando há mais controles do que espaço vertical.
     def _scrollable_tab(self, notebook, padding=12):
         """Cria uma aba com rolagem vertical para telas menores e conteúdo longo."""
         page = ttk.Frame(notebook)
@@ -82,9 +90,11 @@ class MainWindow:
         content = ttk.Frame(canvas, padding=padding)
         window_id = canvas.create_window((0, 0), window=content, anchor="nw")
 
+        ## O QUE FAZ: Atualiza a região rolável conforme o tamanho real dos widgets internos muda.
         def update_scroll_region(_event=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
 
+        ## O QUE FAZ: Faz o conteúdo interno acompanhar a largura disponível no Canvas.
         def fit_content_width(event):
             canvas.itemconfigure(window_id, width=event.width)
 
@@ -92,11 +102,13 @@ class MainWindow:
         canvas.bind("<Configure>", fit_content_width)
 
         # A rolagem do mouse só é capturada quando o ponteiro está nesta aba.
+        ## O QUE FAZ: Ativa a rolagem do mouse enquanto o cursor está sobre esta área.
         def wheel_on(_event=None):
             canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
             canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
             canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
 
+        ## O QUE FAZ: Remove os vínculos de rolagem do mouse ao sair da área.
         def wheel_off(_event=None):
             canvas.unbind_all("<MouseWheel>")
             canvas.unbind_all("<Button-4>")
@@ -106,6 +118,7 @@ class MainWindow:
         canvas.bind("<Leave>", wheel_off)
         return page, content
 
+    ## O QUE FAZ: Monta os componentes principais da janela e distribui as abas.
     def _build(self):
         self.header = tk.Frame(self.root)
         self.header.pack(fill="x", padx=20, pady=12)
@@ -149,6 +162,7 @@ class MainWindow:
         self.footer_message = tk.Label(self.footer, textvariable=self.log_var, anchor="w", font=("Segoe UI", 10))
         self.footer_message.pack(side="left", fill="x", expand=True)
 
+    ## O QUE FAZ: Monta controles de operação manual, posição estimada e botão de parada.
     def _operation(self, p):
         pos = ttk.LabelFrame(p, text=" Posição estimada ")
         pos.pack(fill="x", pady=(0, 16))
@@ -177,6 +191,7 @@ class MainWindow:
         self.stop_button.pack(fill="x", pady=14)
         ttk.Button(p, text="Zerar posição", command=self.zero).pack()
 
+    ## O QUE FAZ: Monta os controles para criar e executar uma sequência de pontos de análise.
     def _analysis(self, p):
         ttk.Label(p, text="Análise por pontos", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         setup = ttk.LabelFrame(p, text=" Pontos ", padding=8)
@@ -197,6 +212,7 @@ class MainWindow:
         self.execute_button = ttk.Button(a, text="EXECUTAR", command=self.execute_analysis, state="disabled")
         self.execute_button.pack(side="right")
 
+    ## O QUE FAZ: Cria uma entrada de coordenada X para cada ponto solicitado pelo operador.
     def create_point_fields(self):
         try:
             n = int(self.point_count_var.get())
@@ -218,6 +234,7 @@ class MainWindow:
         self.sequence_status_var.set(f"{n} pontos.")
         self.execute_button.configure(state="normal")
 
+    ## O QUE FAZ: Remove os campos de pontos e limpa o estado da sequência.
     def clear_points(self):
         for e in self.point_entries:
             e.destroy()
@@ -226,6 +243,7 @@ class MainWindow:
         self.sequence_status_var.set("Nenhum ponto definido.")
         self.execute_button.configure(state="disabled")
 
+    ## O QUE FAZ: Valida entradas e inicia a sequência automática em uma thread separada.
     def execute_analysis(self):
         try:
             points = [float(e.get().replace(",", ".")) for e in self.point_entries]
@@ -238,11 +256,14 @@ class MainWindow:
             return
         if not self._apply_z_values(True):
             return
-        self.sequence.set_points(points)
+                ## Guarda os valores digitados no modelo de sequência.
+self.sequence.set_points(points)
         self.analysis_running = True
         self.execute_button.configure(state="disabled")
-        threading.Thread(target=self._analysis_worker, args=(points,), daemon=True).start()
+                ## A análise roda em thread para que a janela continue respondendo aos eventos.
+threading.Thread(target=self._analysis_worker, args=(points,), daemon=True).start()
 
+    ## O QUE FAZ: Executa a sequência: deslocamento X, aproximação Z, espera de permanência e recuo.
     def _analysis_worker(self, points):
         try:
             current = self.machine.x.current_position_mm
@@ -256,8 +277,10 @@ class MainWindow:
                     self.arduino.move_steps("X", steps, 500)
                 # O Z só deve esperar e subir depois que o botão confirmar contato.
                 # MAX_STEPS significa que a descida terminou sem confirmar o botão.
-                contact_result = self.arduino.z_approach(down, speed, retract)
-                if "LIMIT" not in contact_result:
+                                ## O firmware precisa retornar um status que confirme o limite/contacto esperado.
+contact_result = self.arduino.z_approach(down, speed, retract)
+                                ## ATENÇÃO: esta condição verifica apenas a palavra LIMIT; LIMIT_TOP pode ser confundido com contato.
+if "LIMIT" not in contact_result:
                     raise RuntimeError(
                         "O Z atingiu a quantidade máxima de passos sem confirmar "
                         "o botão. A subida automática não foi iniciada. "
@@ -265,14 +288,17 @@ class MainWindow:
                     )
 
                 # A permanência é contada depois que o botão foi acionado.
-                time.sleep(dwell)
+                                ## Pausa no worker Python; não é um temporizador implementado pelo firmware.
+time.sleep(dwell)
 
                 # Depois da espera, o Z sobe pela distância configurada.
-                self.arduino.z_retract(retract, speed)
+                                ## O recuo é um comando separado depois da espera de permanência.
+self.arduino.z_retract(retract, speed)
                 self._apply_position_line(self.arduino.position())
                 current = target
                 self.root.after(0, lambda i=i, n=len(points): self._progress(i, n))
-            self.root.after(0, lambda: self._finished(True, None))
+                        ## Atualiza widgets no thread principal do Tkinter.
+self.root.after(0, lambda: self._finished(True, None))
         except Exception as e:
             try:
                 self.arduino.stop()
@@ -280,11 +306,13 @@ class MainWindow:
                 pass
             self.root.after(0, lambda: self._finished(False, str(e)))
 
+    ## O QUE FAZ: Atualiza o indicador visual de progresso da sequência.
     def _progress(self, i, n):
         self.sequence_status_var.set(f"Ponto {i}/{n}")
         self.log_var.set(f"Ponto {i}/{n} concluído.")
         self.refresh_positions()
 
+    ## O QUE FAZ: Finaliza o estado da análise e apresenta falhas ao operador.
     def _finished(self, ok, error):
         self.analysis_running = False
         self.execute_button.configure(state="normal")
@@ -293,6 +321,7 @@ class MainWindow:
         if not ok:
             messagebox.showerror("Análise", error or "Erro")
 
+    ## O QUE FAZ: Monta campos para calibração de passos/mm, movimento manual e parâmetros do Z.
     def _calibration(self, p):
         ttk.Label(p, text="Calibração", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         a = ttk.LabelFrame(p, text=" Passos por milímetro ", padding=8)
@@ -322,6 +351,7 @@ class MainWindow:
         ttk.Button(b, text="Salvar", command=self.save_calibration).pack(side="left", padx=8)
         ttk.Button(b, text="Recarregar", command=self._reload_calibration).pack(side="left")
 
+    ## O QUE FAZ: Executa um movimento finito de um único eixo para testes/calibração.
     def _calibration_move(self, axis, direction):
         if self.analysis_running:
             self.log_var.set("Análise em execução."); return
@@ -339,6 +369,7 @@ class MainWindow:
         except Exception as e:
             self.log_var.set(f"Erro no MOVE {axis}: {e}"); messagebox.showerror("Calibração", str(e))
 
+    ## O QUE FAZ: Valida os parâmetros da aproximação e do recuo do Z.
     def _apply_z_values(self, show=False):
         try:
             d = float(self.z_down_mm_var.get().replace(",", ".")); s = int(self.z_speed_var.get()); r = float(self.z_retract_mm_var.get().replace(",", ".")); t = float(self.z_dwell_s_var.get().replace(",", "."))
@@ -347,6 +378,7 @@ class MainWindow:
             if show: messagebox.showerror("Calibração", "Parâmetros do Z inválidos.")
             return False
 
+    ## O QUE FAZ: Valida e aplica os fatores de calibração aos objetos dos eixos.
     def apply_calibration(self):
         try:
             for a in "XYZ":
@@ -355,11 +387,13 @@ class MainWindow:
         except (ValueError, AssertionError):
             messagebox.showerror("Calibração", "Passos/mm inválidos."); return False
 
+    ## O QUE FAZ: Persiste os fatores dos eixos e os parâmetros Z num arquivo JSON local.
     def save_calibration(self):
         if not self.apply_calibration(): return
         d = {"axes_steps_per_mm": {a: self.machine.get_axis(a).microsteps_per_mm for a in "XYZ"}, "z_approach": {"down_mm": float(self.z_down_mm_var.get().replace(",", ".")), "speed_steps_s": int(self.z_speed_var.get()), "retract_mm": float(self.z_retract_mm_var.get().replace(",", ".")), "dwell_s": float(self.z_dwell_s_var.get().replace(",", "."))}}
         CONFIG_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8"); self.log_var.set("Calibração salva.")
 
+    ## O QUE FAZ: Carrega os valores salvos; se não houver arquivo, mantém os valores iniciais.
     def _load_calibration(self):
         for a in "XYZ": self.calibration_vars[a].set(f"{self.machine.get_axis(a).microsteps_per_mm:.6f}")
         if not CONFIG_FILE.exists(): return
@@ -373,8 +407,10 @@ class MainWindow:
             if "dwell_s" in z: self.z_dwell_s_var.set(str(z["dwell_s"]))
         except Exception: pass
 
+    ## O QUE FAZ: Recarrega os valores de calibração do arquivo local.
     def _reload_calibration(self): self._load_calibration(); self.log_var.set("Calibração recarregada.")
 
+    ## O QUE FAZ: Monta o terminal serial para enviar comandos manualmente e visualizar respostas.
     def _terminal(self, p):
         ttk.Label(p, text="Terminal", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         self.terminal_history = tk.Text(p, font=("Consolas", 11), relief="flat"); self.terminal_history.pack(fill="both", expand=True)
@@ -386,9 +422,11 @@ class MainWindow:
         ttk.Button(line, text="Limpar", command=lambda: self.terminal_history.delete("1.0", tk.END)).pack(side="left")
         self._terminal_write("Terminal pronto.")
 
+    ## O QUE FAZ: Acrescenta uma linha ao histórico visível do terminal.
     def _terminal_write(self, text):
         self.terminal_history.insert(tk.END, text + "\n"); self.terminal_history.see(tk.END)
 
+    ## O QUE FAZ: Envia o texto digitado para o Arduino e exibe a resposta ou o erro.
     def send_terminal_command(self):
         command = self.terminal_command.get().strip()
         if not command: return
@@ -397,6 +435,7 @@ class MainWindow:
         try: self._terminal_write(self.arduino.send(command))
         except Exception as e: self._terminal_write("ERRO: " + str(e))
 
+    ## O QUE FAZ: Consulta periodicamente a posição e processa mensagens recebidas do Arduino.
     def _poll_serial(self):
         if self.arduino and self.arduino.is_connected and not self.analysis_running:
             try:
@@ -412,14 +451,17 @@ class MainWindow:
             except Exception as e: self._terminal_write("SERIAL ERROR: " + str(e))
         self.root.after(100, self._poll_serial)
 
+    ## O QUE FAZ: Atualiza os rótulos da GUI a partir do estado serial de um botão.
     def _update_limit_from_button_line(self, line):
         if "TOP=" in line: self.limit_top_var.set("ACIONADO" if "TOP=PRESSED" in line else "LIVRE")
         if "BOTTOM=" in line: self.limit_bottom_var.set("ACIONADO" if "BOTTOM=PRESSED" in line else "LIVRE")
 
+    ## O QUE FAZ: Atualiza os dois rótulos de limite a partir da resposta LIMITS.
     def _update_limit_from_limits_line(self, line):
         self.limit_top_var.set("ACIONADO" if "TOP=PRESSED" in line else "LIVRE")
         self.limit_bottom_var.set("ACIONADO" if "BOTTOM=PRESSED" in line else "LIVRE")
 
+    ## O QUE FAZ: Abre uma janela auxiliar com o estado dos botões de limite do Z.
     def open_limit_window(self):
         if self.limit_window is not None and self.limit_window.winfo_exists(): self.limit_window.lift(); return
         self.limit_window = tk.Toplevel(self.root); self.limit_window.title("Estado dos botões Z"); self.limit_window.resizable(False, False)
@@ -432,6 +474,7 @@ class MainWindow:
         ttk.Label(frame, text="Atualização automática a cada 500 ms.").pack(pady=(10, 0))
         self.limit_window.protocol("WM_DELETE_WINDOW", self.close_limit_window); self._poll_limits_window()
 
+    ## O QUE FAZ: Atualiza periodicamente a janela de limites enquanto ela estiver aberta.
     def _poll_limits_window(self):
         if self.limit_window is None or not self.limit_window.winfo_exists(): self.limit_poll_id = None; return
         if self.arduino and self.arduino.is_connected:
@@ -439,6 +482,7 @@ class MainWindow:
             except Exception: pass
         self.limit_poll_id = self.root.after(500, self._poll_limits_window)
 
+    ## O QUE FAZ: Cancela a atualização periódica e fecha a janela de limites.
     def close_limit_window(self):
         if self.limit_poll_id is not None:
             try: self.root.after_cancel(self.limit_poll_id)
@@ -447,6 +491,7 @@ class MainWindow:
         if self.limit_window is not None and self.limit_window.winfo_exists(): self.limit_window.destroy()
         self.limit_window = None
 
+    ## O QUE FAZ: Converte contagens de passos recebidas em posições estimadas em milímetros.
     def _apply_position_line(self, line):
         try:
             for token in line.split()[1:]:
@@ -455,9 +500,11 @@ class MainWindow:
             self.refresh_positions()
         except (ValueError, IndexError): pass
 
+    ## O QUE FAZ: Atualiza os indicadores de posição mostrados na interface.
     def refresh_positions(self):
         for a, value in self.machine.positions().items(): self.position_vars[a].set(f"{value:.3f} mm")
 
+    ## O QUE FAZ: Inicia o JOG do eixo selecionado quando o botão é pressionado.
     def _jog_press(self, axis, direction):
         if self.analysis_running: return
         if not self.arduino or not self.arduino.is_connected: self.log_var.set("Conecte o Arduino."); return
@@ -467,17 +514,21 @@ class MainWindow:
         self._send_jog_stop(); self.jog_axis = axis; self.jog_direction = -direction if axis == "X" else direction
         self.arduino.jog_start(axis, self.jog_direction, speed); self._schedule_jog_refresh()
 
+    ## O QUE FAZ: Agenda a renovação periódica do comando JOG.
     def _schedule_jog_refresh(self):
         if self.jog_axis is not None: self.jog_refresh_id = self.root.after(100, self._refresh_jog)
 
+    ## O QUE FAZ: Renova o JOG enquanto o botão continua pressionado.
     def _refresh_jog(self):
         self.jog_refresh_id = None
         if self.jog_axis is None or not self.arduino or not self.arduino.is_connected: return
         try: self.arduino.jog_start(self.jog_axis, self.jog_direction, int(self.jog_speed_var.get())); self._schedule_jog_refresh()
         except Exception: self._send_jog_stop()
 
+    ## O QUE FAZ: Interrompe o JOG quando o operador solta o botão.
     def _jog_release(self, event=None): self._send_jog_stop()
 
+    ## O QUE FAZ: Cancela renovações pendentes e solicita que o Arduino pare o JOG.
     def _send_jog_stop(self):
         if self.jog_refresh_id:
             try: self.root.after_cancel(self.jog_refresh_id)
@@ -488,19 +539,23 @@ class MainWindow:
             except Exception: pass
         self.jog_axis = None; self.jog_direction = 0
 
+    ## O QUE FAZ: Envia comandos de parada ao firmware.
     def stop(self):
         self._send_jog_stop()
         if self.arduino and self.arduino.is_connected: self.arduino.stop()
         self.log_var.set("STOP enviado.")
 
+    ## O QUE FAZ: Abre a porta, verifica o protocolo com PING/PONG e inicia o leitor serial.
     def connect(self):
         if self.arduino and self.arduino.is_connected: return
         try:
-            self.arduino = ArduinoController(self.port_var.get().strip()); self.arduino.connect()
+                        ## Cria o controlador serial usando a porta informada na GUI.
+self.arduino = ArduinoController(self.port_var.get().strip()); self.arduino.connect()
             self.status_var.set("Conectado — " + self.arduino.port); self.connect_button.configure(state="disabled")
         except Exception as e:
             self.status_var.set("Falha na conexão"); messagebox.showerror("Arduino", str(e))
 
+    ## O QUE FAZ: Fecha a comunicação serial e encerra o leitor em segundo plano.
     def disconnect(self):
         self._send_jog_stop(); self.close_limit_window()
         if self.arduino:
@@ -508,17 +563,21 @@ class MainWindow:
             except Exception: pass
         self.arduino = None; self.status_var.set("Desconectado"); self.connect_button.configure(state="normal")
 
+    ## O QUE FAZ: Define a posição lógica de um ou de todos os eixos como zero.
     def zero(self):
         if not self.arduino or not self.arduino.is_connected: messagebox.showwarning("ZERO", "Conecte o Arduino primeiro."); return
         try: self.arduino.send("ZERO"); self.machine.zero(); self.refresh_positions()
         except Exception as e: messagebox.showerror("ZERO", str(e))
 
+    ## O QUE FAZ: Retorna a paleta correspondente ao tema selecionado.
     def _colors(self): return self.DARK if self.dark_mode else self.LIGHT
 
+    ## O QUE FAZ: Alterna entre tema claro e escuro e atualiza os widgets.
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode; self._apply_theme()
         if hasattr(self, "spatial_map"): self.spatial_map.refresh_theme()
 
+    ## O QUE FAZ: Aplica cores e estilos aos componentes da interface.
     def _apply_theme(self):
         c = self._colors(); self.root.configure(bg=c["bg"]); self.header.configure(bg=c["bg"]); self.footer.configure(bg=c["bg"])
         self.footer_label.configure(bg=c["bg"], fg=c["accent"]); self.footer_message.configure(bg=c["bg"], fg=c["text"]); self.status_label.configure(bg=c["panel"], fg=c["accent"])
@@ -529,10 +588,12 @@ class MainWindow:
         self.style.configure("TButton", background=c["panel"], foreground=c["text"], font=("Segoe UI", 10, "bold"), padding=(10, 6)); self.style.map("TButton", background=[("active", c["field"])], foreground=[("active", c["text"])])
         self.style.configure("TNotebook", background=c["bg"], borderwidth=0); self.style.configure("TNotebook.Tab", background=c["field"], foreground=c["text"], padding=(14, 8), font=("Segoe UI", 10, "bold")); self.style.map("TNotebook.Tab", background=[("selected", c["panel"])], foreground=[("selected", c["text"])])
 
+    ## O QUE FAZ: Executa a rotina de encerramento da GUI e da comunicação.
     def close(self):
         self.close_limit_window(); self._send_jog_stop(); self.disconnect(); self.root.destroy()
 
 
+## O QUE FAZ: Ponto de entrada da aplicação: cria a janela principal e inicia o ciclo de eventos do Tkinter.
 def main():
     root = tk.Tk(); MainWindow(root); root.mainloop()
 
