@@ -1,3 +1,6 @@
+/* CÓPIA COMENTADA PARA ESTUDO — v0.1.0.
+ * Foram acrescentados comentários; não altere os comandos executáveis sem testar.
+ */
 // TESTE 02 — PROTOCOLO DA MÁQUINA, SEM MOTOR
 // Objetivo: testar os comandos que o Python/GUI enviará ao Arduino.
 // NENHUM pino de STEP/DIR é acionado neste teste.
@@ -15,6 +18,7 @@
 
 const long BAUD_RATE = 115200;
 
+// ESTUDO: configura a serial e prepara o firmware de teste sem acionar motores.
 void setup() {
   Serial.begin(BAUD_RATE);
   while (!Serial) {
@@ -23,6 +27,7 @@ void setup() {
   Serial.println("READY TEST_NO_MOTOR");
 }
 
+// ESTUDO: lê comandos de texto e retorna respostas para testar o protocolo com segurança, sem movimento.
 void loop() {
   if (!Serial.available()) {
     return;
