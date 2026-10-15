@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from pathlib import Path
@@ -53,6 +54,7 @@ class MainWindow:
         self.position_vars = {a: tk.StringVar(value="0.000 mm") for a in "XYZ"}
         self.calibration_vars = {a: tk.StringVar() for a in "XYZ"}
         self.point_entries = []
+        self.point_dwell_entries = []
         self.z_down_mm_var = tk.StringVar(value="1.000")
         self.z_speed_var = tk.StringVar(value="200")
         self.z_retract_mm_var = tk.StringVar(value="1.000")
@@ -219,19 +221,30 @@ class MainWindow:
         self.execute_button.configure(state="normal")
 
     def clear_points(self):
-        for e in self.point_entries:
+        # Os campos de X e de permanência pertencem à mesma tabela de pontos.
+        for e in self.point_entries + self.point_dwell_entries:
             e.destroy()
         self.point_entries = []
+        self.point_dwell_entries = []
         self.sequence.clear()
         self.sequence_status_var.set("Nenhum ponto definido.")
         self.execute_button.configure(state="disabled")
 
     def execute_analysis(self):
+        # Captura todos os valores antes de iniciar a thread; mudanças na GUI
+        # durante a execução não alteram a sequência que já foi validada.
         try:
-            points = [float(e.get().replace(",", ".")) for e in self.point_entries]
-            assert points
-        except (ValueError, AssertionError):
-            messagebox.showerror("Pontos", "Todos os X precisam conter números.")
+            points = [float(e.get().strip().replace(",", ".")) for e in self.point_entries]
+            dwell_times = [float(e.get().strip().replace(",", ".")) for e in self.point_dwell_entries]
+            if not points or len(points) != len(dwell_times):
+                raise ValueError
+            if not all(math.isfinite(x) for x in points):
+                raise ValueError("As posições X precisam ser números finitos.")
+            if not all(math.isfinite(t) and t >= 0 for t in dwell_times):
+                raise ValueError("Cada permanência deve ser um número finito maior ou igual a zero.")
+        except ValueError as exc:
+            detail = str(exc) or "Preencha todos os X e tempos de permanência com números válidos."
+            messagebox.showerror("Pontos", detail)
             return
         if not self.arduino or not self.arduino.is_connected:
             messagebox.showwarning("Análise", "Conecte o Arduino.")
@@ -241,15 +254,14 @@ class MainWindow:
         self.sequence.set_points(points)
         self.analysis_running = True
         self.execute_button.configure(state="disabled")
-        threading.Thread(target=self._analysis_worker, args=(points,), daemon=True).start()
+        threading.Thread(target=self._analysis_worker, args=(points, dwell_times), daemon=True).start()
 
-    def _analysis_worker(self, points):
+    def _analysis_worker(self, points, dwell_times):
         try:
             current = self.machine.x.current_position_mm
             down = round(float(self.z_down_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
             retract = round(float(self.z_retract_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
             speed = int(self.z_speed_var.get())
-            dwell = float(self.z_dwell_s_var.get().replace(",", "."))
             for i, target in enumerate(points, 1):
                 steps = -round((target - current) * self.machine.x.microsteps_per_mm)
                 if steps:
@@ -264,8 +276,8 @@ class MainWindow:
                         f"Resposta do Arduino: {contact_result}"
                     )
 
-                # A permanência é contada depois que o botão foi acionado.
-                time.sleep(dwell)
+                # A permanência individual é contada após a confirmação de contato.
+                time.sleep(dwell_times[i - 1])
 
                 # Depois da espera, o Z sobe pela distância configurada.
                 self.arduino.z_retract(retract, speed)
