@@ -1,15 +1,19 @@
+"""Estruturas de dados para armazenar e percorrer uma lista ordenada de pontos de análise."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
 @dataclass
+## O QUE FAZ: Representa um ponto de análise pela coordenada X em milímetros.
 class MeasurementPoint:
     """Um ponto da análise. Somente X varia entre pontos; Y fica fixo."""
 
     x_mm: float
 
 
+## O QUE FAZ: Armazena uma lista de pontos e o índice do ponto atual.
 class PointSequence:
     """Sequência simples e ordenada de posições X."""
 
@@ -17,13 +21,16 @@ class PointSequence:
         self.points: list[MeasurementPoint] = []
         self.index = -1
 
+    ## O QUE FAZ: Acrescenta um ponto ao final da lista.
     def add(self, x_mm: float) -> None:
         self.points.append(MeasurementPoint(float(x_mm)))
 
+    ## O QUE FAZ: Substitui todos os pontos e reinicia o índice.
     def set_points(self, positions_mm: list[float]) -> None:
         self.points = [MeasurementPoint(float(x)) for x in positions_mm]
         self.index = -1
 
+    ## O QUE FAZ: Remove um ponto e ajusta o índice para continuar consistente.
     def remove(self, index: int) -> None:
         del self.points[index]
         if self.points and self.index >= len(self.points):
@@ -31,24 +38,29 @@ class PointSequence:
         elif not self.points:
             self.index = -1
 
+    ## O QUE FAZ: Esvazia a sequência e reinicia seu estado.
     def clear(self) -> None:
         self.points.clear()
         self.index = -1
 
+    ## O QUE FAZ: Inicia a sequência pelo primeiro ponto, recusando uma lista vazia.
     def start(self) -> None:
         if not self.points:
             raise ValueError("Adicione pelo menos um ponto.")
         self.index = 0
 
+    ## O QUE FAZ: Retorna o ponto atual se o índice for válido.
     def current(self) -> MeasurementPoint | None:
         if 0 <= self.index < len(self.points):
             return self.points[self.index]
         return None
 
+    ## O QUE FAZ: Avança o índice e informa se ainda há pontos.
     def advance(self) -> bool:
         self.index += 1
         return self.index < len(self.points)
 
     @property
+    ## O QUE FAZ: Informa se a sequência não vazia já ultrapassou o último ponto.
     def finished(self) -> bool:
         return bool(self.points) and self.index >= len(self.points)
