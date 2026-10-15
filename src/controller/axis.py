@@ -1,7 +1,10 @@
+"""Modelo matemático de um eixo: converte distâncias em passos e mantém uma posição teórica. Não aciona o motor."""
+
 from dataclasses import dataclass
 
 
 @dataclass
+## O QUE FAZ: Representa um eixo e os parâmetros necessários para converter milímetros em pulsos.
 class Axis:
     """Modelo matemático de um eixo.
 
@@ -16,21 +19,25 @@ class Axis:
     calibrated_steps_per_mm: float | None = None
 
     @property
+    ## O QUE FAZ: Calcula pulsos por volta considerando o microstepping.
     def microsteps_per_revolution(self) -> int:
         return self.steps_per_revolution * self.microstepping
 
     @property
+    ## O QUE FAZ: Usa a calibração experimental, ou calcula pulsos por milímetro a partir dos parâmetros mecânicos.
     def microsteps_per_mm(self) -> float:
         """Passos efetivos por mm; usa calibração quando fornecida."""
         if self.calibrated_steps_per_mm is not None:
             return self.calibrated_steps_per_mm
         return self.microsteps_per_revolution / self.mm_per_revolution
 
+    ## O QUE FAZ: Define um fator de calibração experimental positivo.
     def set_calibration(self, steps_per_mm: float) -> None:
         if steps_per_mm <= 0:
             raise ValueError("steps/mm deve ser maior que zero.")
         self.calibrated_steps_per_mm = float(steps_per_mm)
 
+    ## O QUE FAZ: Calcula direção, passos e posição teórica do alvo, sem comunicação com hardware.
     def calculate_move(self, target_position_mm: float) -> dict:
         distance_mm = target_position_mm - self.current_position_mm
         direction = 1 if distance_mm > 0 else -1 if distance_mm < 0 else 0
@@ -46,6 +53,7 @@ class Axis:
             "theoretical_position_mm": theoretical_position_mm,
         }
 
+    ## O QUE FAZ: Atualiza a posição lógica para o resultado teórico de um movimento.
     def move_to(self, target_position_mm: float) -> dict:
         movement = self.calculate_move(target_position_mm)
         self.current_position_mm = movement["theoretical_position_mm"]
