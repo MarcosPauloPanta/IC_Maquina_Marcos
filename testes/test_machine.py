@@ -4,6 +4,7 @@ from src.controller.axis import Axis
 from src.controller.machine import Machine
 
 
+## O QUE FAZ: Cria uma máquina de teste com três eixos independentes.
 def criar_maquina():
     return Machine(
         x=Axis(200, 16, 8),
@@ -12,12 +13,14 @@ def criar_maquina():
     )
 
 
+## O QUE FAZ: Confere que a máquina disponibiliza X, Y e Z pelo nome.
 def test_maquina_expoe_tres_eixos():
     machine = criar_maquina()
 
     assert set(machine.axes) == {"X", "Y", "Z"}
 
 
+## O QUE FAZ: Confere o encaminhamento de um movimento ao eixo solicitado.
 def test_maquina_move_eixo():
     machine = criar_maquina()
 
@@ -27,6 +30,7 @@ def test_maquina_move_eixo():
     assert machine.positions()["X"] == 10
 
 
+## O QUE FAZ: Confere que zerar um eixo não altera as posições lógicas dos demais.
 def test_zero_de_um_eixo_nao_altera_os_outros():
     machine = criar_maquina()
     machine.move_to("X", 10)
