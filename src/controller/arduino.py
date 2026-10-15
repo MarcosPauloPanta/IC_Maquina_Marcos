@@ -1,3 +1,5 @@
+"""Camada serial entre Python e Arduino. As respostas são texto e precisam coincidir com o protocolo implementado no firmware."""
+
 from __future__ import annotations
 
 import queue
@@ -6,9 +8,11 @@ import time
 from typing import Optional
 
 
+## O QUE FAZ: Gerencia a conexão serial e o protocolo de comandos do Arduino.
 class ArduinoController:
     """Comunicação serial entre a GUI e o firmware do Arduino."""
 
+    ## O QUE FAZ: Guarda os parâmetros do eixo e prepara sua posição lógica inicial.
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.25):
         self.port = port
         self.baudrate = baudrate
@@ -19,9 +23,11 @@ class ArduinoController:
         self._reader_stop = threading.Event()
 
     @property
+    ## O QUE FAZ: Informa se a porta serial está aberta.
     def is_connected(self) -> bool:
         return bool(self._serial is not None and self._serial.is_open)
 
+    ## O QUE FAZ: Abre a porta, verifica o protocolo com PING/PONG e inicia o leitor serial.
     def connect(self) -> None:
         try:
             import serial
@@ -47,6 +53,7 @@ class ArduinoController:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
+    ## O QUE FAZ: Fecha a comunicação serial e encerra o leitor em segundo plano.
     def disconnect(self) -> None:
         if self._serial is None:
             return
@@ -77,6 +84,7 @@ class ArduinoController:
             except queue.Empty:
                 return
 
+    ## O QUE FAZ: Lê mensagens da porta serial em segundo plano e as guarda numa fila.
     def _reader_loop(self) -> None:
         while not self._reader_stop.is_set():
             serial_port = self._serial
@@ -91,6 +99,7 @@ class ArduinoController:
                 if text:
                     self._rx_queue.put(text)
 
+    ## O QUE FAZ: Escreve um comando ASCII terminado em nova linha.
     def _write_line(self, command: str) -> None:
         command = command.strip()
         if not command:
@@ -100,9 +109,11 @@ class ArduinoController:
         self._serial.write((command + "\n").encode("ascii"))
         self._serial.flush()
 
+    ## O QUE FAZ: Envia um comando sem esperar pela resposta final.
     def send_nowait(self, command: str) -> None:
         self._write_line(command)
 
+    ## O QUE FAZ: Envia um comando e aguarda uma resposta até o timeout configurado.
     def send(self, command: str) -> str:
         self._clear_rx_queue()
         self._write_line(command)
@@ -114,6 +125,7 @@ class ArduinoController:
                 continue
         raise TimeoutError(f"Arduino não respondeu: {command.strip()}")
 
+    ## O QUE FAZ: Retira da fila as mensagens que já chegaram, sem esperar por novas.
     def read_available(self) -> list[str]:
         lines: list[str] = []
         while True:
@@ -122,6 +134,7 @@ class ArduinoController:
             except queue.Empty:
                 return lines
 
+    ## O QUE FAZ: Aguarda a resposta de conclusão de movimento ou levanta erro/timeout.
     def wait_for_motion(self, timeout_s: float = 120.0, ready_prefix: str | None = None) -> str:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
@@ -139,6 +152,7 @@ class ArduinoController:
                 return line
         raise TimeoutError("Arduino não concluiu o movimento dentro do tempo esperado.")
 
+    ## O QUE FAZ: Envia o comando que inicia ou renova o JOG de um eixo.
     def jog_start(self, axis: str, direction: int, speed_steps_s: int) -> None:
         axis = axis.upper()
         if axis not in {"X", "Y", "Z"}:
@@ -147,6 +161,7 @@ class ArduinoController:
             raise ValueError("A velocidade deve ser positiva.")
         self.send_nowait(f"JOG_START {axis} {1 if direction > 0 else -1} {int(speed_steps_s)}")
 
+    ## O QUE FAZ: Envia o comando de parada do JOG.
     def jog_stop(self) -> None:
         if self.is_connected:
             self.send_nowait("JOG_STOP")
@@ -154,11 +169,13 @@ class ArduinoController:
     def jog(self, axis: str, direction: int) -> None:
         self.jog_start(axis, direction, 200)
 
+    ## O QUE FAZ: Envia comandos de parada ao firmware.
     def stop(self) -> None:
         if self.is_connected:
             self.send_nowait("JOG_STOP")
             self.send_nowait("STOP")
 
+    ## O QUE FAZ: Solicita movimento finito por passos e espera seu resultado.
     def move_steps(self, axis: str, steps: int, speed_steps_s: int) -> None:
         axis = axis.upper()
         if axis not in {"X", "Y", "Z"}:
@@ -171,6 +188,7 @@ class ArduinoController:
         if result.startswith(("LIMIT", "Z_DOWN_LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
 
+    ## O QUE FAZ: Solicita aproximação do Z e devolve o status textual recebido.
     def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> str:
         """Desce o Z e devolve o motivo informado pelo Arduino.
 
@@ -186,6 +204,7 @@ class ArduinoController:
             raise RuntimeError(result)
         return result
 
+    ## O QUE FAZ: Solicita recuo do Z e valida a resposta de conclusão.
     def z_retract(self, steps: int, speed_steps_s: int) -> None:
         """Sobe o Z usando o comando aceito pelo firmware atual."""
         if steps <= 0 or speed_steps_s <= 0:
@@ -198,18 +217,23 @@ class ArduinoController:
         if not result.startswith("DONE"):
             raise RuntimeError(result)
 
+    ## O QUE FAZ: Solicita ao firmware a contagem de passos atual.
     def request_position(self) -> None:
         if self.is_connected:
             self.send_nowait("POS")
 
+    ## O QUE FAZ: Verifica se o Arduino responde PONG.
     def ping(self) -> str:
         return self.send("PING")
 
+    ## O QUE FAZ: Consulta o estado de movimento do firmware.
     def status(self) -> str:
         return self.send("STATUS")
 
+    ## O QUE FAZ: Consulta o estado dos botões de limite.
     def limits(self) -> str:
         return self.send("LIMITS")
 
+    ## O QUE FAZ: Consulta a posição contada pelo Arduino.
     def position(self) -> str:
         return self.send("POS")
