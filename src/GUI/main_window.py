@@ -18,6 +18,9 @@ CONFIG_FILE = Path("calibration.json")
 
 
 class MainWindow:
+    # Velocidade fixa para toda a sequência automática de análise.
+    ANALYSIS_SPEED_STEPS_S = 500
+
     LIGHT = {"bg": "#F4F4F1", "panel": "#FFFFFF", "field": "#E4E4DF", "text": "#181818", "accent": "#74451F", "border": "#A9A9A2", "danger": "#A51D2D"}
     DARK = {"bg": "#141516", "panel": "#1D1F21", "field": "#25282B", "text": "#F5F5F2", "accent": "#E24A55", "border": "#464A4F", "danger": "#E04450"}
 
@@ -56,7 +59,7 @@ class MainWindow:
         self.point_entries = []
         self.point_dwell_entries = []
         self.z_down_mm_var = tk.StringVar(value="1.000")
-        self.z_speed_var = tk.StringVar(value="200")
+        self.z_speed_var = tk.StringVar(value="500")
         self.z_retract_mm_var = tk.StringVar(value="1.000")
         self.z_dwell_s_var = tk.StringVar(value="1.000")
         self.cal_move_steps_var = tk.StringVar(value="1000")
@@ -271,11 +274,13 @@ class MainWindow:
             current = self.machine.x.current_position_mm
             down = round(float(self.z_down_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
             retract = round(float(self.z_retract_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
-            speed = int(self.z_speed_var.get())
+            # A análise usa 500 steps/s em todos os movimentos X e Z,
+            # independentemente da velocidade configurada para JOG/calibração.
+            speed = self.ANALYSIS_SPEED_STEPS_S
             for i, target in enumerate(points, 1):
                 steps = -round((target - current) * self.machine.x.microsteps_per_mm)
                 if steps:
-                    self.arduino.move_steps("X", steps, 500)
+                    self.arduino.move_steps("X", steps, self.ANALYSIS_SPEED_STEPS_S)
                 # A chegada pode ocorrer de duas formas:
                 # 1) o Z completa a descida em milimetros programada (MAX_STEPS);
                 # 2) um dos botoes e acionado antes da distancia terminar.
@@ -295,10 +300,25 @@ class MainWindow:
                     )
 
                 # A permanencia individual comeca depois da distancia ou do botao.
-                time.sleep(dwell_times[i - 1])
+                # O status deixa visivel o tempo efetivamente aguardado em cada ponto.
+                dwell_s = dwell_times[i - 1]
+                self.root.after(
+                    0,
+                    lambda i=i, dwell_s=dwell_s: self.log_var.set(
+                        f"Ponto {i}: permanência de {dwell_s:g} s."
+                    ),
+                )
+                # Espera bloqueante nesta thread de trabalho: nenhum ponto seguinte
+                # pode começar antes de terminar o tempo de permanência.
+                deadline = time.monotonic() + dwell_s
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(remaining, 0.1))
 
                 # Depois da espera, o Z sobe pela distância configurada.
-                self.arduino.z_retract(retract, speed)
+                self.arduino.z_retract(retract, self.ANALYSIS_SPEED_STEPS_S)
                 self._apply_position_line(self.arduino.position())
                 current = target
                 self.root.after(0, lambda i=i, n=len(points): self._progress(i, n))
