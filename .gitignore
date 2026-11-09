@@ -1,5 +1,13 @@
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 .vscode/
+
+# Build artifacts
+/build/
+/dist/
+
+# Local machine calibration (do not publish lab-specific values)
+calibration.json
