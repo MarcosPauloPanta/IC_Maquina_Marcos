@@ -10,9 +10,13 @@ class SpatialMap:
 
     DEFAULT_SIZE_MM = 35.74
 
-    def __init__(self, parent, colors_getter):
+    def __init__(self, parent, colors_getter, on_execute=None, on_stop=None, on_set_origin=None):
         self.parent = parent
         self.colors_getter = colors_getter
+        self.on_execute = on_execute
+        self.on_stop = on_stop
+        self.on_set_origin = on_set_origin
+        self.running = False
         self.points: list[dict[str, float]] = []
         self.selected_index: int | None = None
         self.shape_var = tk.StringVar(value="Círculo")
@@ -82,6 +86,7 @@ class SpatialMap:
         side.pack(side="right", fill="y")
         self.count_var = tk.StringVar(value="0 pontos")
         ttk.Label(side, textvariable=self.count_var, font=("Segoe UI", 10, "bold")).pack(pady=(0, 5))
+        ttk.Label(side, text="Ponto | X | Y | Z | espera (s)", font=("Segoe UI", 8, "bold")).pack(pady=(0, 3))
 
         list_frame = ttk.Frame(side)
         list_frame.pack(fill="both", expand=True)
@@ -98,7 +103,13 @@ class SpatialMap:
 
         buttons = ttk.Frame(side)
         buttons.pack(fill="x", pady=(6, 0))
-        ttk.Button(buttons, text="Limpar pontos", command=self.clear).pack(fill="x")
+        self.execute_button = ttk.Button(buttons, text="EXECUTAR SEQUÊNCIA XYZ", command=self.execute, state="disabled")
+        self.execute_button.pack(fill="x", pady=2)
+        self.stop_button = ttk.Button(buttons, text="PARAR SEQUÊNCIA", command=self.stop, state="disabled")
+        self.stop_button.pack(fill="x", pady=2)
+        self.origin_button = ttk.Button(buttons, text="Definir origem manual X/Y/Z", command=self.set_origin)
+        self.origin_button.pack(fill="x", pady=2)
+        ttk.Button(buttons, text="Limpar pontos", command=self.clear).pack(fill="x", pady=2)
         ttk.Label(side, text="Esquerdo: adicionar / selecionar\nDireito: apagar selecionado", font=("Segoe UI", 8)).pack(pady=(6, 0))
 
         self._geometry_changed()
@@ -198,7 +209,7 @@ class SpatialMap:
         x, y = self._px_to_mm(px, py)
         if not self._inside_sample(x, y):
             return
-        self.points.append({"x": x, "y": y})
+        self.points.append({"x": x, "y": y, "z": 0.0, "dwell": 1.0})
         self.selected_index = len(self.points) - 1
         self._refresh_rows()
         self._draw()
@@ -226,17 +237,21 @@ class SpatialMap:
         self._refresh_rows()
         self._draw()
 
-    def _save_row(self, index, x_var, y_var):
+    def _save_row(self, index, x_var, y_var, z_var, dwell_var):
         try:
             x = float(x_var.get().replace(",", "."))
             y = float(y_var.get().replace(",", "."))
+            z = float(z_var.get().replace(",", "."))
+            dwell = float(dwell_var.get().replace(",", "."))
+            if not all(math.isfinite(value) for value in (x, y, z, dwell)) or dwell < 0:
+                raise ValueError
         except ValueError:
             self._refresh_rows()
             return
         if not self._inside_sample(x, y):
             self._refresh_rows()
             return
-        self.points[index] = {"x": x, "y": y}
+        self.points[index] = {"x": x, "y": y, "z": z, "dwell": dwell}
         self.selected_index = index
         self._refresh_rows()
         self._draw()
@@ -255,20 +270,45 @@ class SpatialMap:
             tk.Label(row, text=f"P{index + 1}", width=3, anchor="w").pack(side="left")
             x_var = tk.StringVar(value=f"{point['x']:.3f}")
             y_var = tk.StringVar(value=f"{point['y']:.3f}")
-            tk.Entry(row, textvariable=x_var, width=7, justify="center").pack(side="left", padx=1)
-            tk.Entry(row, textvariable=y_var, width=7, justify="center").pack(side="left", padx=1)
-            tk.Button(row, text="✓", width=2, relief="flat", command=lambda i=index, xv=x_var, yv=y_var: self._save_row(i, xv, yv)).pack(side="left", padx=1)
+            z_var = tk.StringVar(value=f"{point.get('z', 0.0):.3f}")
+            dwell_var = tk.StringVar(value=f"{point.get('dwell', 1.0):.2f}")
+            for variable in (x_var, y_var, z_var, dwell_var):
+                tk.Entry(row, textvariable=variable, width=6, justify="center").pack(side="left", padx=1)
+            tk.Button(row, text="✓", width=2, relief="flat", command=lambda i=index, xv=x_var, yv=y_var, zv=z_var, dv=dwell_var: self._save_row(i, xv, yv, zv, dv)).pack(side="left", padx=1)
             tk.Button(row, text="🗑", width=2, relief="flat", command=lambda i=index: self._delete_index(i)).pack(side="left", padx=1)
         self.count_var.set(f"{len(self.points)} ponto{'s' if len(self.points) != 1 else ''}")
+        if hasattr(self, "execute_button") and not self.running:
+            self.execute_button.configure(state="normal" if self.points else "disabled")
 
     def _scroll_points(self, event):
         self.points_canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def clear(self):
+        if self.running:
+            return
         self.points.clear()
         self.selected_index = None
         self._refresh_rows()
         self._draw()
+
+    def execute(self):
+        if self.running or not self.points or self.on_execute is None:
+            return
+        self.on_execute([dict(point) for point in self.points])
+
+    def stop(self):
+        if self.running and self.on_stop is not None:
+            self.on_stop()
+
+    def set_origin(self):
+        if not self.running and self.on_set_origin is not None:
+            self.on_set_origin()
+
+    def set_running(self, running):
+        self.running = bool(running)
+        self.execute_button.configure(state="disabled" if self.running or not self.points else "normal")
+        self.stop_button.configure(state="normal" if self.running else "disabled")
+        self.origin_button.configure(state="disabled" if self.running else "normal")
 
     def _draw(self):
         if not hasattr(self, "canvas"):
