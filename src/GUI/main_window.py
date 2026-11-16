@@ -253,15 +253,36 @@ class MainWindow:
             messagebox.showerror("Pontos inválidos", str(exc))
             return
 
+        if not messagebox.askyesno(
+            "Confirmar sequência espacial",
+            f"Serão executados {len(validated)} pontos, na ordem X → Y → Z, um eixo por vez, a {self.ANALYSIS_SPEED_STEPS_S} passos/s.\\n\\n"
+            "Confirme que a origem manual está correta, que a área está livre e que os botões físicos do Z foram testados.\\n\\n"
+            "Deseja iniciar?",
+        ):
+            return
         self.spatial_stop_event.clear()
         self.spatial_running = True
         self.spatial_map.set_running(True)
         self.log_var.set(f"Sequência espacial iniciada: {len(validated)} pontos.")
         threading.Thread(target=self._spatial_sequence_worker, args=(validated,), daemon=True).start()
 
+    def _sync_spatial_position_from_firmware(self):
+        """Atualiza o modelo a partir do POS sem tocar widgets fora da thread Tk."""
+        line = self.arduino.position()
+        values = {}
+        for token in line.split()[1:]:
+            axis, raw = token.split("=")
+            if axis in "XYZ":
+                values[axis] = int(raw) / self.machine.get_axis(axis).microsteps_per_mm
+        if set(values) != set("XYZ"):
+            raise RuntimeError(f"Resposta POS incompleta: {line}")
+        for axis, value in values.items():
+            self.machine.get_axis(axis).current_position_mm = value
+        self.root.after(0, self.refresh_positions)
+
     def _spatial_sequence_worker(self, points):
         try:
-            self._apply_position_line(self.arduino.position())
+            self._sync_spatial_position_from_firmware()
             speed = self.ANALYSIS_SPEED_STEPS_S
             total = len(points)
             for index, point in enumerate(points, 1):
@@ -281,7 +302,7 @@ class MainWindow:
                     steps = sign * round(delta * self.machine.get_axis(axis).microsteps_per_mm)
                     if steps:
                         self.arduino.move_steps(axis, steps, speed)
-                        self._apply_position_line(self.arduino.position())
+                        self._sync_spatial_position_from_firmware()
                 dwell = point["dwell"]
                 self.root.after(0, lambda i=index, n=total, p=point, d=dwell: self.log_var.set(
                     f"Mapa espacial: ponto {i}/{n} — X={p['x']:.3f}, Y={p['y']:.3f}, "
@@ -695,6 +716,10 @@ class MainWindow:
 
     def connect(self):
         if self.arduino and self.arduino.is_connected: return
+        # Reinicialização/conexão serial não preserva uma origem absoluta confiável.
+        self.spatial_origin_set = False
+        if hasattr(self, "spatial_map"):
+            self.spatial_map.origin_button.configure(text="Definir origem manual X/Y/Z")
         try:
             self.arduino = ArduinoController(self.port_var.get().strip()); self.arduino.connect()
             self.status_var.set("Conectado — " + self.arduino.port); self.connect_button.configure(state="disabled")
@@ -702,6 +727,9 @@ class MainWindow:
             self.status_var.set("Falha na conexão"); messagebox.showerror("Arduino", str(e))
 
     def disconnect(self):
+        self.spatial_origin_set = False
+        if hasattr(self, "spatial_map"):
+            self.spatial_map.origin_button.configure(text="Definir origem manual X/Y/Z")
         self._send_jog_stop(); self.close_limit_window()
         if self.arduino:
             try: self.arduino.disconnect()
