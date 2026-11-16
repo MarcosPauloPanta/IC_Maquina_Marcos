@@ -135,7 +135,7 @@ class ArduinoController:
                 return line
             if ready_prefix and line.startswith(ready_prefix):
                 return line
-            if line.startswith("DONE"):
+            if line.startswith("DONE") or line.startswith("OK STOP"):
                 return line
         raise TimeoutError("Arduino não concluiu o movimento dentro do tempo esperado.")
 
@@ -170,6 +170,8 @@ class ArduinoController:
         result = self.wait_for_motion()
         if result.startswith(("LIMIT", "Z_DOWN_LIMIT", "Z_UP_LIMIT")):
             raise RuntimeError(result)
+        if result != "DONE":
+            raise RuntimeError(f"Movimento não concluído: {result}")
 
     def z_approach(self, steps: int, speed_steps_s: int, retract_steps: int, dwell_ms: int = 0) -> str:
         """Desce o Z e devolve o motivo de chegada informado pelo Arduino.
