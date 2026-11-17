@@ -36,7 +36,7 @@ class MainWindow:
         except tk.TclError:
             pass
         self.arduino = None
-        self.machine = Machine(Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400), Axis(200, 16, 8, calibrated_steps_per_mm=400))
+        self.machine = Machine(Axis(200, 16, 8, calibrated_steps_per_mm=201), Axis(200, 16, 8, calibrated_steps_per_mm=199), Axis(200, 16, 8, calibrated_steps_per_mm=200))
         self.sequence = PointSequence()
         self.dark_mode = False
         self.analysis_running = False
@@ -191,7 +191,7 @@ class MainWindow:
         ttk.Button(p, text="Zerar posição", command=self.zero).pack()
 
     def set_spatial_origin(self):
-        """Define a origem lógica manual na posição física atual; não faz homing."""
+        """Zera somente X e Y na posição física atual; não movimenta motores."""
         if not self.arduino or not self.arduino.is_connected:
             messagebox.showwarning("Origem manual", "Conecte o Arduino antes de definir a origem.")
             return
@@ -199,36 +199,36 @@ class MainWindow:
             messagebox.showwarning("Origem manual", "Pare a sequência antes de redefinir a origem.")
             return
         confirmed = messagebox.askyesno(
-            "Definir origem manual",
-            "Posicione manualmente o mecanismo no ponto que será X=0, Y=0 e Z=0.\n\n"
-            "Esta ação apenas zera os contadores lógicos; NÃO procura a origem e NÃO movimenta motores.\n\n"
-            "Confirma que os três eixos estão na posição física desejada?",
+            "Definir origem manual X/Y",
+            "Posicione manualmente os eixos X e Y no ponto que será (0, 0).\n\n"
+            "Esta ação zera SOMENTE os contadores X e Y. Não movimenta motores e não altera Z.\n\n"
+            "Confirma que X e Y estão na posição física desejada?",
         )
         if not confirmed:
             return
         try:
-            for axis in "XYZ":
+            for axis in ("X", "Y"):
                 response = self.arduino.send(f"ZERO {axis}")
                 if response != "OK ZERO":
                     raise RuntimeError(f"Falha ao zerar {axis}: {response}")
                 self.machine.zero(axis)
             self.spatial_origin_set = True
             self.refresh_positions()
-            self.log_var.set("Origem manual X/Y/Z definida. Homing automático ainda não disponível.")
-            self.spatial_map.origin_button.configure(text="Origem manual definida")
+            self.log_var.set("Origem manual X/Y definida. O eixo Z não foi alterado.")
+            self.spatial_map.origin_button.configure(text="Origem X/Y definida")
         except Exception as exc:
             self.spatial_origin_set = False
             messagebox.showerror("Origem manual", str(exc))
 
     def execute_spatial_sequence(self, points):
-        """Executa destinos XYZ absolutos, um eixo por vez, com espera por ponto."""
+        """Valida e inicia a sequência XY com o ciclo Z reutilizado da Análise."""
         if not self.arduino or not self.arduino.is_connected:
             messagebox.showwarning("Mapa espacial", "Conecte o Arduino primeiro.")
             return
         if not self.spatial_origin_set:
             messagebox.showwarning(
                 "Mapa espacial",
-                "Defina primeiro a origem manual X/Y/Z, com os eixos posicionados fisicamente no zero desejado.",
+                "Defina primeiro a origem manual de X/Y, posicionando fisicamente os dois eixos no zero desejado.",
             )
             return
         if self.analysis_running or self.spatial_running:
@@ -236,84 +236,131 @@ class MainWindow:
         if not points:
             messagebox.showwarning("Mapa espacial", "Adicione pelo menos um ponto.")
             return
-        validated = []
+        if not self._apply_z_values(True):
+            return
+
         try:
+            down_steps = round(float(self.z_down_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
+            retract_steps = round(float(self.z_retract_mm_var.get().replace(",", ".")) * self.machine.z.microsteps_per_mm)
+            if down_steps <= 0 or retract_steps <= 0:
+                raise ValueError("Descida e recuo do Z precisam corresponder a pelo menos um passo.")
+            validated = []
             for index, point in enumerate(points, 1):
-                x, y, z, dwell = (float(point[key]) for key in ("x", "y", "z", "dwell"))
-                if not all(math.isfinite(value) for value in (x, y, z, dwell)) or dwell < 0:
-                    raise ValueError(f"Ponto {index}: coordenadas finitas e espera >= 0 são obrigatórias.")
+                x = float(point["x"])
+                y = float(point["y"])
+                dwell = float(point["dwell"])
+                if not all(math.isfinite(value) for value in (x, y, dwell)) or dwell < 0:
+                    raise ValueError(f"Ponto {index}: X/Y devem ser finitos e o tempo deve ser >= 0.")
                 if not self.spatial_map._inside_sample(x, y):
                     raise ValueError(f"Ponto {index}: X/Y está fora da geometria configurada.")
-                for axis, target in (("X", x), ("Y", y)):
-                    steps = round(abs(target) * self.machine.get_axis(axis).microsteps_per_mm)
-                    if steps > 10000:
-                        raise ValueError(f"Ponto {index}: {axis} excede o limite de software de 10.000 passos.")
-                validated.append({"x": x, "y": y, "z": z, "dwell": dwell})
+                # Os limites do firmware são +/- 10.000 passos a partir da origem.
+                x_steps = round(abs(x) * self.machine.x.microsteps_per_mm)
+                y_steps = round(abs(y) * self.machine.y.microsteps_per_mm)
+                if x_steps > 10000 or y_steps > 10000:
+                    raise ValueError(f"Ponto {index}: X ou Y excede o limite de software de 10.000 passos.")
+                validated.append({"x": x, "y": y, "dwell": dwell})
         except (KeyError, TypeError, ValueError) as exc:
             messagebox.showerror("Pontos inválidos", str(exc))
             return
 
         if not messagebox.askyesno(
             "Confirmar sequência espacial",
-            f"Serão executados {len(validated)} pontos, na ordem X → Y → Z, um eixo por vez, a {self.ANALYSIS_SPEED_STEPS_S} passos/s.\\n\\n"
-            "Confirme que a origem manual está correta, que a área está livre e que os botões físicos do Z foram testados.\\n\\n"
+            f"Serão executados {len(validated)} pontos XY, com um eixo por vez, a "
+            f"{self.ANALYSIS_SPEED_STEPS_S} passos/s. Em cada ponto, o Z fará o mesmo ciclo da Análise "
+            "(descer, aguardar o tempo individual e subir).\n\n"
+            "Confirme a origem X/Y, os deslocamentos curtos e que a área está livre. "
+            "O STOP virtual interrompe o movimento, mas não substitui uma parada de emergência física.\n\n"
             "Deseja iniciar?",
         ):
             return
+
         self.spatial_stop_event.clear()
         self.spatial_running = True
         self.spatial_map.set_running(True)
         self.log_var.set(f"Sequência espacial iniciada: {len(validated)} pontos.")
-        threading.Thread(target=self._spatial_sequence_worker, args=(validated,), daemon=True).start()
+        threading.Thread(
+            target=self._spatial_sequence_worker,
+            args=(validated, down_steps, retract_steps),
+            daemon=True,
+        ).start()
 
     def _sync_spatial_position_from_firmware(self):
-        """Atualiza o modelo a partir do POS sem tocar widgets fora da thread Tk."""
+        """Sincroniza POS; X usa sinal invertido, igual ao movimento da Análise."""
         line = self.arduino.position()
         values = {}
         for token in line.split()[1:]:
             axis, raw = token.split("=")
             if axis in "XYZ":
-                values[axis] = int(raw) / self.machine.get_axis(axis).microsteps_per_mm
+                value = int(raw) / self.machine.get_axis(axis).microsteps_per_mm
+                values[axis] = -value if axis == "X" else value
         if set(values) != set("XYZ"):
             raise RuntimeError(f"Resposta POS incompleta: {line}")
         for axis, value in values.items():
             self.machine.get_axis(axis).current_position_mm = value
         self.root.after(0, self.refresh_positions)
 
-    def _spatial_sequence_worker(self, points):
+    def _spatial_sequence_worker(self, points, down_steps, retract_steps):
         try:
             self._sync_spatial_position_from_firmware()
             speed = self.ANALYSIS_SPEED_STEPS_S
             total = len(points)
+
             for index, point in enumerate(points, 1):
                 if self.spatial_stop_event.is_set():
                     raise RuntimeError("Sequência interrompida pelo operador.")
-                targets = (
-                    ("X", point["x"], -1),
-                    ("Y", point["y"], 1),
-                    ("Z", point["z"], 1),
-                )
-                for axis, target, sign in targets:
+
+                # XY são coordenadas absolutas; X mantém o sentido invertido da Análise.
+                for axis, target in (("X", point["x"]), ("Y", point["y"])):
                     if self.spatial_stop_event.is_set():
                         raise RuntimeError("Sequência interrompida pelo operador.")
-                    model_position = self.machine.get_axis(axis).current_position_mm
-                    current = -model_position if axis == "X" else model_position
-                    delta = target - current
-                    steps = sign * round(delta * self.machine.get_axis(axis).microsteps_per_mm)
-                    if steps:
-                        self.arduino.move_steps(axis, steps, speed)
+                    current = self.machine.get_axis(axis).current_position_mm
+                    delta_steps = round((target - current) * self.machine.get_axis(axis).microsteps_per_mm)
+                    if axis == "X":
+                        delta_steps = -delta_steps
+                    if delta_steps:
+                        self.arduino.move_steps(axis, delta_steps, speed)
                         self._sync_spatial_position_from_firmware()
-                dwell = point["dwell"]
-                self.root.after(0, lambda i=index, n=total, p=point, d=dwell: self.log_var.set(
-                    f"Mapa espacial: ponto {i}/{n} — X={p['x']:.3f}, Y={p['y']:.3f}, "
-                    f"Z={p['z']:.3f} mm; espera {d:g} s."
-                ))
-                deadline = time.monotonic() + dwell
+
+                if self.spatial_stop_event.is_set():
+                    raise RuntimeError("Sequência interrompida antes do ciclo Z.")
+
+                # Mesmo protocolo de aproximação, permanência e recuo usado pela Análise.
+                contact_result = self.arduino.z_approach(down_steps, speed, retract_steps)
+                valid_arrivals = (
+                    "Z_APPROACH_READY MAX_STEPS",
+                    "Z_APPROACH_READY LIMIT_TOP",
+                    "Z_APPROACH_READY LIMIT_BOTTOM",
+                    "Z_APPROACH_READY LIMIT",
+                )
+                if not any(contact_result.startswith(reason) for reason in valid_arrivals):
+                    raise RuntimeError(
+                        "O Arduino não confirmou uma chegada válida do eixo Z. "
+                        f"Resposta: {contact_result}"
+                    )
+
+                dwell_s = point["dwell"]
+                self.root.after(
+                    0,
+                    lambda i=index, n=total, p=point, d=dwell_s: self.log_var.set(
+                        f"Mapa espacial: ponto {i}/{n} — X={p['x']:.3f}, Y={p['y']:.3f} mm; "
+                        f"permanência {d:g} s."
+                    ),
+                )
+                deadline = time.monotonic() + dwell_s
                 while time.monotonic() < deadline:
                     if self.spatial_stop_event.is_set():
-                        raise RuntimeError("Sequência interrompida durante a espera.")
+                        raise RuntimeError("Sequência interrompida durante a permanência do Z.")
                     time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
-                self.root.after(0, lambda i=index, n=total: self.sequence_status_var.set(f"Mapa espacial: {i}/{n}"))
+
+                if self.spatial_stop_event.is_set():
+                    raise RuntimeError("Sequência interrompida antes do recuo do Z.")
+                self.arduino.z_retract(retract_steps, speed)
+                self._sync_spatial_position_from_firmware()
+                self.root.after(
+                    0,
+                    lambda i=index, n=total: self.sequence_status_var.set(f"Mapa espacial: {i}/{n}"),
+                )
+
             self.root.after(0, lambda: self._spatial_sequence_finished(True, None))
         except Exception as exc:
             try:
@@ -329,6 +376,7 @@ class MainWindow:
         if self.arduino and self.arduino.is_connected:
             try:
                 self.arduino.stop()
+                self.log_var.set("STOP virtual enviado. A sequência não avançará para o próximo movimento.")
             except Exception as exc:
                 self.log_var.set(f"Falha ao enviar STOP: {exc}")
 
@@ -336,7 +384,11 @@ class MainWindow:
         self.spatial_running = False
         self.spatial_map.set_running(False)
         self.sequence_status_var.set("Mapa espacial concluído." if success else "Mapa espacial interrompido.")
-        self.log_var.set("Sequência espacial concluída." if success else f"Sequência espacial interrompida: {error or 'erro'}")
+        self.log_var.set(
+            "Sequência espacial concluída."
+            if success
+            else f"Sequência espacial interrompida: {error or 'erro'}"
+        )
         self.refresh_positions()
         if not success and error and "interrompida" not in error.lower():
             messagebox.showerror("Mapa espacial", error)
@@ -617,7 +669,7 @@ class MainWindow:
         except Exception as e: self._terminal_write("ERRO: " + str(e))
 
     def _poll_serial(self):
-        if self.arduino and self.arduino.is_connected and not self.analysis_running:
+        if self.arduino and self.arduino.is_connected and not self.analysis_running and not self.spatial_running:
             try:
                 if time.monotonic() - self.last_pos_request > .25:
                     self.arduino.request_position(); self.last_pos_request = time.monotonic()
@@ -719,7 +771,7 @@ class MainWindow:
         # Reinicialização/conexão serial não preserva uma origem absoluta confiável.
         self.spatial_origin_set = False
         if hasattr(self, "spatial_map"):
-            self.spatial_map.origin_button.configure(text="Definir origem manual X/Y/Z")
+            self.spatial_map.origin_button.configure(text="Definir origem manual X/Y")
         try:
             self.arduino = ArduinoController(self.port_var.get().strip()); self.arduino.connect()
             self.status_var.set("Conectado — " + self.arduino.port); self.connect_button.configure(state="disabled")
