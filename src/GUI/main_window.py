@@ -367,7 +367,19 @@ class MainWindow:
                 self.arduino.stop()
             except Exception:
                 pass
-            self.root.after(0, lambda error=str(exc): self._spatial_sequence_finished(False, error))
+            # Depois de uma parada durante um movimento, POS é a referência
+            # para atualizar a posição parcial realmente alcançada pelo firmware.
+            try:
+                if self.arduino and self.arduino.is_connected:
+                    self._sync_spatial_position_from_firmware()
+            except Exception:
+                pass
+            error = (
+                "Sequência interrompida pelo operador."
+                if self.spatial_stop_event.is_set()
+                else str(exc)
+            )
+            self.root.after(0, lambda error=error: self._spatial_sequence_finished(False, error))
 
     def stop_spatial_sequence(self):
         if not self.spatial_running:
